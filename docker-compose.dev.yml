@@ -1,0 +1,37 @@
+# Local development override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Differences from production:
+#   - App port 8000 exposed directly on localhost (no Caddy)
+#   - Hot-reload via volume mount
+#   - Single worker
+#   - No migrate service (use: docker compose exec app alembic upgrade head)
+
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app  # mount source for hot reload
+    environment:
+      DATABASE_URL: postgresql+asyncpg://relay:devpassword@db:5432/relay
+    networks:
+      - internal
+      - web
+
+  db:
+    ports:
+      - "5432:5432"  # expose postgres to host for psql / DB tools
+    environment:
+      POSTGRES_PASSWORD: devpassword
+
+  # No Caddy in dev — hit localhost:8000 directly
+  caddy:
+    profiles: ["disabled"]  # exclude from dev
+
+  migrate:
+    profiles: ["disabled"]  # run manually in dev

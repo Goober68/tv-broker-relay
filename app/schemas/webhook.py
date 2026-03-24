@@ -1,0 +1,166 @@
+from pydantic import BaseModel, field_validator, model_validator
+from typing import Literal
+from datetime import datetime
+from app.models.order import (
+    OrderAction, OrderType, TimeInForce, InstrumentType,
+    BROKER_INSTRUMENT_SUPPORT,
+)
+
+
+class WebhookPayload(BaseModel):
+    secret: str
+    broker: Literal["oanda", "ibkr", "tradovate", "etrade"]
+    account: str = "primary"
+    action: OrderAction
+    symbol: str
+    instrument_type: InstrumentType = InstrumentType.FOREX
+    exchange: str | None = None    # e.g. "CME", "NASDAQ" — optional hint for IBKR
+    currency: str | None = None    # settlement currency, e.g. "USD"
+    order_type: OrderType = OrderType.MARKET
+    quantity: float                # shares for equity, contracts for futures, units for forex
+    price: float | None = None
+    comment: str | None = None
+
+    # Limit / stop order controls
+    time_in_force: TimeInForce = TimeInForce.GTC
+    expire_at: datetime | None = None
+
+    # Cancel-and-replace
+    cancel_replace_id: str | None = None
+
+    # Equity-specific
+    extended_hours: bool = False   # allow pre/post-market fills (equities only)
+
+    # Options contract spec — required when instrument_type=option
+    option_expiry: str | None = None    # ISO date: "2025-03-21"
+    option_strike: float | None = None  # strike price: 185.0
+    option_right: str | None = None     # "C" (call) or "P" (put)
+    option_multiplier: float = 100.0    # shares per contract (standard = 100)
+
+    # Risk management
+    stop_loss: float | None = None
+    take_profit: float | None = None
+    trailing_distance: float | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, v: str) -> str:
+        return v.upper().strip()
+
+    @field_validator("exchange")
+    @classmethod
+    def normalize_exchange(cls, v: str | None) -> str | None:
+        return v.upper().strip() if v else None
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, v: str | None) -> str | None:
+        return v.upper().strip() if v else None
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_must_be_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("quantity must be positive")
+        return v
+
+    @model_validator(mode="after")
+    def broker_supports_instrument_type(self) -> "WebhookPayload":
+        """Reject instrument types the broker cannot trade."""
+        supported = BROKER_INSTRUMENT_SUPPORT.get(self.broker, set())
+        if self.instrument_type.value not in supported:
+            raise ValueError(
+                f"Broker {self.broker!r} does not support instrument type "
+                f"{self.instrument_type.value!r}. "
+                f"Supported types: {sorted(supported)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def futures_quantity_must_be_integer(self) -> "WebhookPayload":
+        """Futures are traded in whole contracts."""
+        if self.instrument_type == InstrumentType.FUTURE:
+            if self.quantity != int(self.quantity):
+                raise ValueError(
+                    f"Futures quantity must be a whole number of contracts, got {self.quantity}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def extended_hours_equity_only(self) -> "WebhookPayload":
+        if self.extended_hours and self.instrument_type != InstrumentType.EQUITY:
+            raise ValueError("extended_hours is only valid for equity orders")
+        return self
+
+    @model_validator(mode="after")
+    def option_fields_required_for_options(self) -> "WebhookPayload":
+        if self.instrument_type == InstrumentType.OPTION:
+            missing = []
+            if not self.option_expiry:
+                missing.append("option_expiry")
+            if self.option_strike is None:
+                missing.append("option_strike")
+            if not self.option_right:
+                missing.append("option_right")
+            if missing:
+                raise ValueError(
+                    f"Options require: {missing}. "
+                    "Provide option_expiry (YYYY-MM-DD), option_strike, and option_right ('C' or 'P')."
+                )
+            if self.option_right.upper() not in ("C", "P"):
+                raise ValueError("option_right must be 'C' (call) or 'P' (put)")
+            self.option_right = self.option_right.upper()
+        return self
+
+    @model_validator(mode="after")
+    def price_required_for_limit_stop(self) -> "WebhookPayload":
+        if self.order_type in (OrderType.LIMIT, OrderType.STOP) and self.price is None:
+            raise ValueError("price is required for limit and stop orders")
+        return self
+
+    @model_validator(mode="after")
+    def gtd_requires_expire_at(self) -> "WebhookPayload":
+        if self.time_in_force == TimeInForce.GTD and self.expire_at is None:
+            raise ValueError("expire_at is required when time_in_force is GTD")
+        return self
+
+    @model_validator(mode="after")
+    def tif_market_order_rules(self) -> "WebhookPayload":
+        if self.order_type == OrderType.MARKET:
+            if self.time_in_force not in (TimeInForce.FOK, TimeInForce.IOC):
+                raise ValueError(
+                    f"Market orders only support FOK or IOC time_in_force, got {self.time_in_force}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def sl_and_tsl_mutually_exclusive(self) -> "WebhookPayload":
+        if self.stop_loss is not None and self.trailing_distance is not None:
+            raise ValueError(
+                "stop_loss and trailing_distance are mutually exclusive"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sl_tp_side(self) -> "WebhookPayload":
+        if self.order_type != OrderType.MARKET:
+            return self
+        if self.action == OrderAction.BUY:
+            if self.stop_loss is not None and self.take_profit is not None:
+                if self.stop_loss >= self.take_profit:
+                    raise ValueError("For a buy: stop_loss must be below take_profit")
+        elif self.action == OrderAction.SELL:
+            if self.stop_loss is not None and self.take_profit is not None:
+                if self.stop_loss <= self.take_profit:
+                    raise ValueError("For a sell: stop_loss must be above take_profit")
+        return self
+
+
+class OrderResponse(BaseModel):
+    order_id: int
+    status: str
+    broker_order_id: str | None = None
+    message: str | None = None
+
+    class Config:
+        from_attributes = True
