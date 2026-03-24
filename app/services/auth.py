@@ -9,6 +9,7 @@ Token strategy:
     are immediately revoked (token family invalidation).
 """
 import hashlib
+import bcrypt
 import secrets
 from datetime import datetime, timezone, timedelta
 
@@ -20,17 +21,17 @@ from sqlalchemy import select, update
 from app.config import get_settings
 from app.models.tenant import Tenant, RefreshToken
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 # ── Password ───────────────────────────────────────────────────────────────────
 
-def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+def _prepare(plain: str) -> bytes:
+    return hashlib.sha256(plain.encode()).hexdigest().encode()
 
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(_prepare(plain), bcrypt.gensalt()).decode()
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(_prepare(plain), hashed.encode())
 
 
 # ── Access Token ───────────────────────────────────────────────────────────────
@@ -183,7 +184,7 @@ async def authenticate_tenant(
     tenant = await get_tenant_by_email(db, email)
     if tenant is None:
         # Run verify anyway to prevent timing attacks leaking valid emails
-        pwd_context.dummy_verify()
+        bcrypt.checkpw(b"dummy", bcrypt.hashpw(b"dummy", bcrypt.gensalt()))
         return None
     if not verify_password(password, tenant.password_hash):
         return None

@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     // Outputs to frontend/dist — Dockerfile copies this to app/static
-    outDir: 'dist',
+    outDir: '../app/static',
     emptyOutDir: true,
   },
   server: {
