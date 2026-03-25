@@ -241,6 +241,82 @@ async def _reconcile_once():
                 )
 
 
+# ── Live P&L Polling ──────────────────────────────────────────────────────────
+
+async def _poll_pnl_once():
+    """
+    Poll open position P&L from supported brokers (Oanda, Tradovate, E*Trade).
+    Groups non-flat positions by (tenant, broker, account) to minimise API calls,
+    then writes last_price, unrealized_pnl, and last_price_at back to the DB.
+
+    Only runs for brokers that implement get_open_positions_pnl().
+    """
+    SUPPORTED = {"oanda", "tradovate", "etrade"}
+
+    async with AsyncSessionLocal() as db:
+        # Load all non-flat positions for supported brokers
+        result = await db.execute(
+            select(Position).where(
+                func.abs(Position.quantity) > 1e-9,
+                Position.broker.in_(SUPPORTED),
+            )
+        )
+        positions = result.scalars().all()
+        if not positions:
+            return
+
+        # Group by (tenant_id, broker, account) to make one API call per account
+        from itertools import groupby
+        from operator import attrgetter
+
+        key = lambda p: (p.tenant_id, p.broker, p.account)
+        positions_sorted = sorted(positions, key=key)
+
+        for (tenant_id, broker_name, account), group in groupby(positions_sorted, key=key):
+            group_positions = list(group)
+            try:
+                broker = await get_broker_for_tenant(broker_name, account, tenant_id, db)
+                pnl_data = await broker.get_open_positions_pnl(account)
+                if not pnl_data:
+                    continue
+
+                # Build lookup by symbol (and root symbol for futures)
+                pnl_by_symbol = {}
+                for item in pnl_data:
+                    sym = item.get("symbol", "")
+                    pnl_by_symbol[sym] = item
+                    # Also index by root for Tradovate (ESH5 -> ES)
+                    root = item.get("symbol_root") or ''.join(c for c in sym if c.isalpha())
+                    if root and root != sym:
+                        pnl_by_symbol[root] = item
+
+                now = datetime.now(timezone.utc)
+                updated = 0
+                for pos in group_positions:
+                    data = pnl_by_symbol.get(pos.symbol)
+                    if data is None:
+                        # Try stripping contract month suffix
+                        root = ''.join(c for c in pos.symbol if c.isalpha())
+                        data = pnl_by_symbol.get(root)
+                    if data:
+                        pos.last_price     = data.get("last_price")
+                        pos.unrealized_pnl = data.get("unrealized_pnl")
+                        pos.last_price_at  = now
+                        updated += 1
+
+                if updated:
+                    await db.commit()
+                    logger.debug(
+                        f"P&L poll: updated {updated} positions "
+                        f"for tenant={tenant_id} {broker_name}/{account}"
+                    )
+
+            except Exception:
+                logger.exception(
+                    f"Error polling P&L for tenant={tenant_id} {broker_name}/{account}"
+                )
+
+
 # ── Daily P&L Email ────────────────────────────────────────────────────────────
 
 _last_summary_date: datetime | None = None
@@ -353,6 +429,10 @@ def start_background_tasks() -> list[asyncio.Task]:
         asyncio.create_task(
             _run_forever("fill_poll", settings.fill_poll_interval_seconds, _poll_fills_once),
             name="fill_poll",
+        ),
+        asyncio.create_task(
+            _run_forever("pnl_poll", settings.pnl_poll_interval_seconds, _poll_pnl_once),
+            name="pnl_poll",
         ),
         asyncio.create_task(
             _run_forever("ibkr_keepalive", settings.ibkr_keepalive_interval_seconds, _ibkr_keepalive_once),

@@ -175,12 +175,90 @@ class TradovateBroker(BrokerBase):
                 resp = await client.get(f"{self.base_url}/position/list")
                 resp.raise_for_status()
                 for pos in resp.json():
-                    if pos.get("symbol") == symbol:
+                    # Match both symbol and account to handle multiple accounts per login
+                    pos_account = (
+                        pos.get("accountName")
+                        or pos.get("accountSpec")
+                        or pos.get("account")
+                        or ""
+                    )
+                    pos_symbol = pos.get("contractName") or pos.get("symbol") or ""
+                    if pos_symbol == symbol and pos_account == account:
                         return float(pos.get("netPos", 0))
                 return 0.0
             except Exception:
                 logger.exception(f"Error fetching Tradovate position for {symbol}")
                 return 0.0
+
+    async def get_open_positions_pnl(self, account: str) -> list[dict]:
+        """
+        Fetch live unrealized P&L from Tradovate.
+        Uses position list (avg price + qty) + quote endpoint for current price,
+        then calculates unrealized P&L using the futures multiplier.
+        """
+        token = await self._ensure_authenticated()
+        async with httpx.AsyncClient(headers=self._headers(token), timeout=10.0) as client:
+            try:
+                # Get open positions
+                resp = await client.get(f"{self.base_url}/position/list")
+                resp.raise_for_status()
+                pos_list = [
+                    p for p in resp.json()
+                    if p.get("netPos", 0) != 0
+                    and (
+                        p.get("accountName") or
+                        p.get("accountSpec") or
+                        p.get("account") or ""
+                    ) == account
+                ]
+                if not pos_list:
+                    return []
+
+                result = []
+                for pos in pos_list:
+                    symbol    = pos.get("contractName", pos.get("symbol", ""))
+                    net_pos   = float(pos.get("netPos", 0))
+                    avg_price = float(pos.get("avgPrice", 0))
+
+                    # Fetch current quote for this symbol
+                    last_price = None
+                    try:
+                        q_resp = await client.get(
+                            f"{self.base_url}/md/getQuote",
+                            params={"symbol": symbol}
+                        )
+                        if q_resp.status_code == 200:
+                            q = q_resp.json()
+                            # Use mid price if available, else last trade
+                            bid = q.get("bid")
+                            ask = q.get("ask")
+                            last = q.get("last")
+                            if bid and ask:
+                                last_price = (float(bid) + float(ask)) / 2
+                            elif last:
+                                last_price = float(last)
+                    except Exception:
+                        pass
+
+                    mult = self._get_multiplier(symbol)
+                    if last_price and avg_price:
+                        unrealized_pnl = (last_price - avg_price) * net_pos * mult
+                    else:
+                        unrealized_pnl = None
+
+                    # Strip contract month suffix for symbol matching (ESH5 -> ES)
+                    root = ''.join(c for c in symbol if c.isalpha())
+
+                    result.append({
+                        "symbol":         symbol,
+                        "symbol_root":    root,
+                        "last_price":     last_price,
+                        "unrealized_pnl": unrealized_pnl,
+                    })
+                return result
+            except Exception:
+                logger.exception("Error fetching Tradovate open positions P&L")
+                return []
 
     async def poll_order_status(
         self, broker_order_id: str, account: str

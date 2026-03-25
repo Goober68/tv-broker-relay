@@ -38,6 +38,11 @@ class Position(Base):
     daily_realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     daily_pnl_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Live P&L — polled from broker every N seconds
+    last_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unrealized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_price_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     def is_flat(self) -> bool:
         return abs(self.quantity) < 1e-9
 

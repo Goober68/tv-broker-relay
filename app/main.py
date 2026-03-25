@@ -58,16 +58,21 @@ async def health():
 # All other non-API routes return index.html for client-side routing (SPA fallback).
 
 if STATIC_DIR.exists():
+    # Mount the full static dir so favicon.svg, index.html etc. are served directly
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon_ico():
+        # Fallback for browsers that request .ico
+        return FileResponse(STATIC_DIR / "favicon.png", media_type="image/png")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        # Serve index.html for all non-API, non-asset routes
         index = STATIC_DIR / "index.html"
         if index.exists():
             return FileResponse(index)
-        return {"detail": "Frontend not built. Run: cd frontend && npm run build"}
-else:
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_not_built(full_path: str):
-        return {"detail": "Frontend not built. Run: cd frontend && npm run build"}
+        return {"detail": "Frontend not built"}

@@ -221,6 +221,50 @@ class OandaBroker(BrokerBase):
                 logger.exception(f"Error fetching Oanda position for {symbol}")
                 return 0.0
 
+    async def get_open_positions_pnl(self, account: str) -> list[dict]:
+        """
+        Fetch live unrealized P&L from Oanda's openPositions endpoint.
+        Oanda returns unrealizedPL in account currency directly — no calculation needed.
+        """
+        account_id = self._resolve_account(account)
+        async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/accounts/{account_id}/openPositions"
+                )
+                resp.raise_for_status()
+                positions = resp.json().get("positions", [])
+                result = []
+                for pos in positions:
+                    symbol = pos.get("instrument", "")
+                    # Oanda returns separate long/short sides — combine
+                    long_units  = float(pos.get("long",  {}).get("units", 0))
+                    short_units = float(pos.get("short", {}).get("units", 0))
+                    net_units   = long_units + short_units
+
+                    long_pnl  = float(pos.get("long",  {}).get("unrealizedPL", 0))
+                    short_pnl = float(pos.get("short", {}).get("unrealizedPL", 0))
+                    unrealized_pnl = long_pnl + short_pnl
+
+                    # Average price: use whichever side has units
+                    if long_units > 0:
+                        avg_price = float(pos.get("long", {}).get("averagePrice", 0)) or None
+                    elif short_units < 0:
+                        avg_price = float(pos.get("short", {}).get("averagePrice", 0)) or None
+                    else:
+                        avg_price = None
+
+                    if net_units != 0:
+                        result.append({
+                            "symbol":        symbol,
+                            "last_price":    avg_price,   # Oanda doesn't return mid in this endpoint
+                            "unrealized_pnl": unrealized_pnl,
+                        })
+                return result
+            except Exception:
+                logger.exception("Error fetching Oanda open positions P&L")
+                return []
+
     async def poll_order_status(
         self, broker_order_id: str, account: str
     ) -> OrderStatusResult:

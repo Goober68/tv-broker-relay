@@ -13,9 +13,11 @@ export default function DashboardPage() {
   const { data: recent }                      = usePolling(() => orders.list({ limit: 8 }), 30_000)
   const { data: sub }                         = useApi(() => billing.subscription())
 
-  const openPos    = (pos || []).filter(p => Math.abs(p.quantity) > 1e-9)
-  const dailyPnl   = openPos.reduce((sum, p) => sum + (p.daily_realized_pnl || 0), 0)
-  const totalPnl   = openPos.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+  const openPos      = (pos || []).filter(p => Math.abs(p.quantity) > 1e-9)
+  const dailyPnl     = openPos.reduce((sum, p) => sum + (p.daily_realized_pnl || 0), 0)
+  const totalPnl     = openPos.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+  const totalUnrealized = openPos.reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0)
+  const hasLivePnl   = openPos.some(p => p.unrealized_pnl != null)
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -25,7 +27,7 @@ export default function DashboardPage() {
       />
 
       {/* Stat row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatCard
           label="Daily P&L"
           value={<PnlValue value={dailyPnl} prefix="$" />}
@@ -36,6 +38,12 @@ export default function DashboardPage() {
           label="Total P&L"
           value={<PnlValue value={totalPnl} prefix="$" />}
           sub="All time realized"
+        />
+        <StatCard
+          label="Unrealized P&L"
+          value={hasLivePnl ? <PnlValue value={totalUnrealized} prefix="$" /> : '—'}
+          sub={hasLivePnl ? "Live from broker" : "Polling not started"}
+          accent={totalUnrealized > 0}
         />
         <StatCard
           label="Open positions"
@@ -72,9 +80,25 @@ export default function DashboardPage() {
               description="Submit a webhook alert to open your first position."
             />
           ) : (
-            <div className="divide-y divide-base-800">
-              {openPos.map(p => <PositionRow key={p.id} pos={p} />)}
-            </div>
+            <>
+              <div className="divide-y divide-base-800">
+                {openPos.map(p => <PositionRow key={p.id} pos={p} />)}
+              </div>
+              {/* Totals footer */}
+              <div className="px-5 py-3 border-t border-base-700 bg-base-800/30 flex items-center justify-between">
+                <span className="text-xs text-base-400">Total realized P&L</span>
+                <div className="flex gap-6">
+                  <div className="text-right">
+                    <div className="text-[10px] text-base-500 mb-0.5">Today</div>
+                    <PnlValue value={dailyPnl} prefix="$" decimals={2} />
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-base-500 mb-0.5">All time</div>
+                    <PnlValue value={totalPnl} prefix="$" decimals={2} />
+                  </div>
+                </div>
+              </div>
+            </>
           )}
         </section>
 
@@ -130,37 +154,101 @@ function UsageBar({ used, total }) {
 }
 
 function PositionRow({ pos }) {
-  const isLong  = pos.quantity > 0
-  const absQty  = Math.abs(pos.quantity)
+  const isLong   = pos.quantity > 0
+  const absQty   = Math.abs(pos.quantity)
+  const isFuture = pos.instrument_type === 'future'
+  const mult     = pos.multiplier || 1.0
+  const priceDp  = pos.instrument_type === 'forex' ? 5 : 2
+
   return (
-    <div className="px-5 py-3.5 flex items-center gap-4 hover:bg-base-800/40 transition-colors">
-      <div className={clsx(
-        'text-xs font-mono font-semibold px-1.5 py-0.5 rounded',
-        isLong ? 'bg-accent/10 text-accent' : 'bg-loss/10 text-loss'
-      )}>
-        {isLong ? 'LONG' : 'SHORT'}
+    <div className="px-5 py-3.5 hover:bg-base-800/40 transition-colors">
+      {/* Top row: direction, symbol, qty */}
+      <div className="flex items-center gap-4">
+        <div className={clsx(
+          'text-xs font-mono font-semibold px-1.5 py-0.5 rounded flex-shrink-0',
+          isLong ? 'bg-accent/10 text-accent' : 'bg-loss/10 text-loss'
+        )}>
+          {isLong ? 'LONG' : 'SHORT'}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-mono text-base-100">{pos.symbol}</span>
+            {isFuture && (
+              <span className="text-[10px] font-mono text-base-500 bg-base-700 px-1 rounded">
+                ×{mult}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-base-400 mt-0.5">{pos.broker} · {pos.account}</div>
+        </div>
+        <div className="text-right">
+          <Mono className="text-base-100">{absQty.toLocaleString()}</Mono>
+          <div className="text-[10px] text-base-500 mt-0.5">
+            avg <span className="font-mono text-base-400">
+              {pos.avg_price ? pos.avg_price.toFixed(priceDp) : '—'}
+            </span>
+          </div>
+        </div>
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-mono text-base-100">{pos.symbol}</div>
-        <div className="text-xs text-base-400">{pos.broker} · {pos.account}</div>
-      </div>
-      <div className="text-right">
-        <Mono className="text-base-100">{absQty.toLocaleString()}</Mono>
-        <div className="text-xs">
-          <PnlValue value={pos.daily_realized_pnl} />
+
+      {/* P&L row */}
+      <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-base-800/60">
+        <div className="flex gap-5">
+          <div>
+            <div className="text-[10px] text-base-500 mb-0.5">Today</div>
+            <PnlValue value={(pos.daily_realized_pnl || 0) * mult} prefix="$" decimals={2} />
+          </div>
+          <div>
+            <div className="text-[10px] text-base-500 mb-0.5">Realized</div>
+            <PnlValue value={(pos.realized_pnl || 0) * mult} prefix="$" decimals={2} />
+          </div>
+          {pos.unrealized_pnl != null && (
+            <div>
+              <div className="text-[10px] text-base-500 mb-0.5 flex items-center gap-1">
+                Unrealized
+                <span className="w-1.5 h-1.5 rounded-full bg-accent inline-block animate-pulse-slow" />
+              </div>
+              <PnlValue value={pos.unrealized_pnl} prefix="$" decimals={2} />
+            </div>
+          )}
+        </div>
+        <div className="text-right">
+          {pos.last_price != null && (
+            <div className="text-[10px] font-mono text-base-400 mb-0.5">
+              last <span className="text-base-300">{pos.last_price.toFixed(priceDp)}</span>
+            </div>
+          )}
+          {pos.last_price_at && (
+            <div className="text-[10px] text-base-600 font-mono">
+              {secondsAgo(pos.last_price_at)}s ago
+            </div>
+          )}
+          {pos.unrealized_pnl == null && (
+            <div className="text-[10px] text-base-600 font-mono">
+              {isFuture ? `pts × ${absQty} × $${mult}` : 'awaiting poll'}
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
+function secondsAgo(isoString) {
+  const diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000)
+  return diff < 0 ? 0 : diff
+}
+
 function OrderRow({ order }) {
-  const isBuy = order.action === 'buy'
+  const isBuy   = order.action === 'buy'
+  const isClose = order.action === 'close'
+  const color   = isBuy
+    ? 'bg-accent/10 text-accent'
+    : isClose ? 'bg-warn/10 text-warn' : 'bg-loss/10 text-loss'
   return (
     <div className="px-5 py-3 flex items-center gap-3 hover:bg-base-800/40 transition-colors">
       <div className={clsx(
-        'text-[10px] font-mono font-bold px-1.5 py-0.5 rounded w-8 text-center',
-        isBuy ? 'bg-accent/10 text-accent' : 'bg-loss/10 text-loss'
+        'text-[10px] font-mono font-bold px-1.5 py-0.5 rounded w-10 text-center', color
       )}>
         {order.action.toUpperCase()}
       </div>

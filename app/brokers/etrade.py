@@ -206,6 +206,50 @@ class EtradeBroker(BrokerBase):
                 logger.exception(f"Error fetching E*Trade position for {symbol}")
                 return 0.0
 
+    async def get_open_positions_pnl(self, account: str) -> list[dict]:
+        """
+        Fetch live unrealized P&L from E*Trade portfolio endpoint.
+        E*Trade returns totalGain (unrealized P&L) and Quick.lastTrade directly.
+        """
+        account_id = self._resolve_account(account)
+        url = f"{self.base_url}/v1/accounts/{account_id}/portfolio"
+        headers = {"Authorization": self._oauth_header("GET", url)}
+        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                result = []
+                portfolios = (
+                    resp.json()
+                    .get("PortfolioResponse", {})
+                    .get("AccountPortfolio", [])
+                )
+                for portfolio in portfolios:
+                    for pos in portfolio.get("Position", []):
+                        symbol = pos.get("Product", {}).get("symbol", "")
+                        qty    = float(pos.get("quantity", 0))
+                        if abs(qty) < 1e-9:
+                            continue
+
+                        # E*Trade provides unrealized gain directly
+                        unrealized_pnl = float(pos.get("totalGain", 0) or 0)
+
+                        # Last trade price from Quick section
+                        last_price = None
+                        quick = pos.get("Quick", {})
+                        if quick.get("lastTrade"):
+                            last_price = float(quick["lastTrade"])
+
+                        result.append({
+                            "symbol":         symbol,
+                            "last_price":     last_price,
+                            "unrealized_pnl": unrealized_pnl,
+                        })
+                return result
+            except Exception:
+                logger.exception("Error fetching E*Trade open positions P&L")
+                return []
+
     async def poll_order_status(
         self, broker_order_id: str, account: str
     ) -> OrderStatusResult:

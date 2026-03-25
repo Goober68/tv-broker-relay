@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     # ── Background Tasks ──────────────────────────────────────────────────────
     fill_poll_interval_seconds: int = 30       # how often to check open order status
+    pnl_poll_interval_seconds: int = 60        # how often to poll live P&L from brokers
     reconcile_interval_seconds: int = 300      # how often to sync positions vs broker
     ibkr_keepalive_interval_seconds: int = 55  # how often to tickle IBKR gateway
     daily_summary_hour_utc: int = 7            # UTC hour to send daily P&L emails (0-23)

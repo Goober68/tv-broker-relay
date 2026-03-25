@@ -58,3 +58,15 @@ class BrokerBase(ABC):
         Default implementation returns not-found — override in brokers that support it.
         """
         return OrderStatusResult(found=False)
+
+    async def get_open_positions_pnl(self, account: str) -> list[dict]:
+        """
+        Fetch live price and unrealized P&L for all open positions on this account.
+
+        Returns a list of dicts:
+            [{"symbol": "EUR_USD", "last_price": 1.08500, "unrealized_pnl": 25.0}, ...]
+
+        unrealized_pnl is in account currency, already multiplier-adjusted where applicable.
+        Default implementation returns empty list — override in supported brokers.
+        """
+        return []
