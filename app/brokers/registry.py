@@ -1,3 +1,4 @@
+import uuid
 """
 Broker registry — per-request adapter instantiation from DB credentials.
 Passes instrument_map from BrokerAccount alongside decrypted credentials.
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def get_broker_for_tenant(
     broker_name: str,
     account_alias: str,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     db: AsyncSession,
 ) -> BrokerBase:
     result = await db.execute(

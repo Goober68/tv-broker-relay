@@ -113,7 +113,7 @@ async def list_open_orders(
 ):
     stmt = (
         select(Order)
-        .where(Order.tenant_id == tenant.id, Order.status == OrderStatus.OPEN.value)
+        .where(Order.tenant_id == tenant.id, Order.status == "open")
         .order_by(desc(Order.created_at))
     )
     if broker:

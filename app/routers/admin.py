@@ -42,7 +42,7 @@ class PlanOut(BaseModel):
 
 class SubscriptionOut(BaseModel):
     id: int
-    tenant_id: int
+    tenant_id: uuid.UUID
     plan_name: str
     status: str
     orders_this_period: int
@@ -149,7 +149,7 @@ async def list_tenants(
 
 @router.get("/tenants/{tenant_id}", response_model=TenantAdminOut)
 async def get_tenant(
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     _admin: Tenant = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -178,7 +178,7 @@ async def get_tenant(
 
 @router.post("/tenants/{tenant_id}/plan", response_model=SubscriptionOut)
 async def assign_tenant_plan(
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     body: AssignPlanRequest,
     _admin: Tenant = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -223,7 +223,7 @@ async def assign_tenant_plan(
 
 @router.patch("/tenants/{tenant_id}/active")
 async def set_tenant_active(
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     is_active: bool,
     _admin: Tenant = Depends(require_admin),
     db: AsyncSession = Depends(get_db),

@@ -21,7 +21,7 @@ _403 = HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
 async def _resolve_tenant(
-    tenant_id: int, x_webhook_secret: str | None, db: AsyncSession
+    tenant_id: uuid.UUID, x_webhook_secret: str | None, db: AsyncSession
 ) -> Tenant:
     if not x_webhook_secret:
         raise _403
@@ -41,7 +41,7 @@ async def _resolve_tenant(
 async def _log_delivery(
     db: AsyncSession,
     *,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     source_ip: str | None,
     user_agent: str | None,
     raw_payload: str | None,

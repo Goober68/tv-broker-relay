@@ -5,7 +5,6 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://relay:relay@localhost:5432/relay"
-    postgres_password: str = "relay"  # used by docker-compose, not the app directly
 
     # ── JWT ───────────────────────────────────────────────────────────────────
     jwt_secret: str = "change-me-in-production"
@@ -19,8 +18,8 @@ class Settings(BaseSettings):
     # ── Stripe ────────────────────────────────────────────────────────────────
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_success_url: str = "https://relay.sweeny.ca/billing/success"
-    stripe_cancel_url: str = "https://relay.sweeny.ca/billing/cancel"
+    stripe_success_url: str = "https://yourdomain.com/billing/success"
+    stripe_cancel_url: str = "https://yourdomain.com/billing/cancel"
 
     # ── Risk Defaults (global fallback, overridden by plan) ───────────────────
     max_position_size: float = 100_000
@@ -39,7 +38,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
-    smtp_from: str = "noreply@sweeny.ca"
+    smtp_from: str = "noreply@yourdomain.com"
     smtp_use_tls: bool = True
     # Set to false to disable all outbound email (useful in dev/test)
     email_enabled: bool = True

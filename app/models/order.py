@@ -1,33 +1,34 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, Float, DateTime, Text, ForeignKey, Enum as SAEnum, Index
+from sqlalchemy import String, Float, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy import Enum as SAEnum, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID
-import uuid
 from app.models.db import Base
+import uuid
 import enum
 
 
 class OrderStatus(str, enum.Enum):
-    PENDING = "pending"
+    PENDING   = "pending"
     SUBMITTED = "submitted"
-    OPEN = "open"
-    FILLED = "filled"
-    PARTIAL = "partial"
+    OPEN      = "open"
+    FILLED    = "filled"
+    PARTIAL   = "partial"
     CANCELLED = "cancelled"
-    REJECTED = "rejected"
-    ERROR = "error"
+    REJECTED  = "rejected"
+    ERROR     = "error"
 
 
 class OrderAction(str, enum.Enum):
-    BUY = "buy"
-    SELL = "sell"
+    BUY   = "buy"
+    SELL  = "sell"
     CLOSE = "close"
 
 
 class OrderType(str, enum.Enum):
     MARKET = "market"
-    LIMIT = "limit"
-    STOP = "stop"
+    LIMIT  = "limit"
+    STOP   = "stop"
 
 
 class TimeInForce(str, enum.Enum):
@@ -39,11 +40,11 @@ class TimeInForce(str, enum.Enum):
 
 
 class InstrumentType(str, enum.Enum):
-    FOREX = "forex"      # currency pairs — Oanda native
-    EQUITY = "equity"    # stocks, ETFs — IBKR, E*Trade
-    FUTURE = "future"    # exchange-traded futures — IBKR, Tradovate
-    CFD = "cfd"          # CFDs — Oanda
-    OPTION = "option"   # Equity options — IBKR, E*Trade
+    FOREX  = "forex"
+    EQUITY = "equity"
+    FUTURE = "future"
+    CFD    = "cfd"
+    OPTION = "option"
 
 
 # Which instrument types each broker supports
@@ -63,34 +64,19 @@ IBKR_SEC_TYPE: dict[str, str] = {
     "option": "OPT",
 }
 
-# Well-known futures multipliers (point value per contract).
-# Tenants can override these in their broker account instrument_map.
-# Values are in the contract's native currency (usually USD).
+# Well-known futures multipliers (point value per contract in USD)
 DEFAULT_FUTURES_MULTIPLIERS: dict[str, float] = {
-    # Equity index futures (CME)
-    "ES":   50.0,   # E-mini S&P 500
-    "NQ":   20.0,   # E-mini Nasdaq-100
-    "RTY":  50.0,   # E-mini Russell 2000
-    "YM":    5.0,   # E-mini Dow
-    "MES":   5.0,   # Micro E-mini S&P 500
-    "MNQ":   2.0,   # Micro E-mini Nasdaq
-    # Energy (NYMEX)
-    "CL":  1000.0,  # WTI Crude Oil
-    "NG":  10000.0, # Natural Gas
-    "RB":  42000.0, # Gasoline (42,000 gal/contract)
-    # Metals (COMEX)
-    "GC":   100.0,  # Gold
-    "SI":   5000.0, # Silver
-    "HG":  25000.0, # Copper
-    # Treasuries (CBOT)
-    "ZB":   1000.0, # 30-Year T-Bond
-    "ZN":   1000.0, # 10-Year T-Note
-    "ZF":   1000.0, # 5-Year T-Note
-    # FX futures (CME)
-    "6E":  125000.0, # Euro FX
-    "6B":   62500.0, # British Pound
-    "6J": 12500000.0,# Japanese Yen
+    "ES":   50.0,    "NQ":   20.0,    "RTY":  50.0,   "YM":    5.0,
+    "MES":   5.0,    "MNQ":   2.0,
+    "CL": 1000.0,    "NG": 10000.0,   "RB": 42000.0,
+    "GC":  100.0,    "SI":  5000.0,   "HG": 25000.0,
+    "ZB": 1000.0,    "ZN":  1000.0,   "ZF":  1000.0,
+    "6E": 125000.0,  "6B":  62500.0,  "6J": 12500000.0,
 }
+
+# Use native_enum=False so SQLAlchemy stores the string value directly.
+# This avoids the uppercase/lowercase mismatch with PostgreSQL enums.
+_ENUM_KWARGS = {"native_enum": False}
 
 
 class Order(Base):
@@ -113,66 +99,58 @@ class Order(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
 
     # Routing
-    broker: Mapped[str] = mapped_column(String(32))
+    broker:  Mapped[str] = mapped_column(String(32))
     account: Mapped[str] = mapped_column(String(64))
 
     # Instrument
-    symbol: Mapped[str] = mapped_column(String(32))
-    instrument_type: Mapped[str] = mapped_column(
-        SAEnum(InstrumentType), default=InstrumentType.FOREX
-    )
-    # Optional instrument qualifiers
-    exchange: Mapped[str | None] = mapped_column(String(32), nullable=True)  # e.g. "CME", "NASDAQ"
-    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)   # e.g. "USD", "EUR"
+    symbol:          Mapped[str]       = mapped_column(String(32))
+    instrument_type: Mapped[str]       = mapped_column(SAEnum(InstrumentType, **_ENUM_KWARGS), default=InstrumentType.FOREX)
+    exchange:        Mapped[str | None] = mapped_column(String(32), nullable=True)
+    currency:        Mapped[str | None] = mapped_column(String(8),  nullable=True)
 
     # Order details
-    action: Mapped[str] = mapped_column(SAEnum(OrderAction))
-    order_type: Mapped[str] = mapped_column(SAEnum(OrderType), default=OrderType.MARKET)
-    quantity: Mapped[float] = mapped_column(Float)  # shares for equity, contracts for futures
-    price: Mapped[float | None] = mapped_column(Float, nullable=True)
-    time_in_force: Mapped[str] = mapped_column(SAEnum(TimeInForce), default=TimeInForce.GTC)
-    expire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    action:         Mapped[str]         = mapped_column(SAEnum(OrderAction,  **_ENUM_KWARGS))
+    order_type:     Mapped[str]         = mapped_column(SAEnum(OrderType,    **_ENUM_KWARGS), default=OrderType.MARKET)
+    quantity:       Mapped[float]       = mapped_column(Float)
+    price:          Mapped[float | None] = mapped_column(Float, nullable=True)
+    time_in_force:  Mapped[str]         = mapped_column(SAEnum(TimeInForce,  **_ENUM_KWARGS), default=TimeInForce.GTC)
+    expire_at:      Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Futures-specific
-    # Effective multiplier used for P&L calculation — captured at order time
-    multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    # Futures / equity
+    multiplier:     Mapped[float] = mapped_column(Float, default=1.0)
+    extended_hours: Mapped[bool]  = mapped_column(Boolean, default=False)
 
-    # Options contract spec (all nullable — only used when instrument_type=option)
-    option_expiry: Mapped[str | None] = mapped_column(String(16), nullable=True)   # "2025-03-21"
-    option_strike: Mapped[float | None] = mapped_column(Float, nullable=True)       # 185.0
-    option_right: Mapped[str | None] = mapped_column(String(4), nullable=True)      # "C" or "P"
-    option_multiplier: Mapped[float] = mapped_column(Float, default=100.0)          # standard = 100 shares/contract
-
-    # Equity-specific
-    extended_hours: Mapped[bool] = mapped_column(
-        __import__("sqlalchemy").Boolean, default=False
-    )  # pre/post market trading
+    # Options
+    option_expiry:     Mapped[str | None]   = mapped_column(String(16), nullable=True)
+    option_strike:     Mapped[float | None] = mapped_column(Float, nullable=True)
+    option_right:      Mapped[str | None]   = mapped_column(String(4), nullable=True)
+    option_multiplier: Mapped[float]        = mapped_column(Float, default=100.0)
 
     # Risk management
-    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
-    take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss:         Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit:       Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_distance: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # State
-    status: Mapped[str] = mapped_column(SAEnum(OrderStatus), default=OrderStatus.PENDING)
-    broker_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    filled_quantity: Mapped[float] = mapped_column(Float, default=0.0)
-    avg_fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status:          Mapped[str]         = mapped_column(SAEnum(OrderStatus, **_ENUM_KWARGS), default=OrderStatus.PENDING)
+    broker_order_id: Mapped[str | None]  = mapped_column(String(128), nullable=True)
+    filled_quantity: Mapped[float]       = mapped_column(Float, default=0.0)
+    avg_fill_price:  Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Metadata
-    raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
-    comment: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    raw_payload:   Mapped[str | None] = mapped_column(Text, nullable=True)
+    comment:       Mapped[str | None] = mapped_column(String(256), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def is_resting(self) -> bool:
-        return self.status == OrderStatus.OPEN
+        return self.status == OrderStatus.OPEN.value
 
     @property
     def is_terminal(self) -> bool:
         return self.status in (
-            OrderStatus.FILLED, OrderStatus.CANCELLED,
-            OrderStatus.REJECTED, OrderStatus.ERROR,
+            OrderStatus.FILLED.value, OrderStatus.CANCELLED.value,
+            OrderStatus.REJECTED.value, OrderStatus.ERROR.value,
         )
 
     def __repr__(self):
