@@ -41,7 +41,7 @@ async def _get_pending_exposure(
             Order.broker == broker,
             Order.account == account,
             Order.symbol == symbol,
-            Order.status == OrderStatus.OPEN,
+            Order.status == OrderStatus.OPEN.value,
         )
     )
     open_orders = result.scalars().all()

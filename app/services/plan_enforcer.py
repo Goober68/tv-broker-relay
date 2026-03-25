@@ -130,7 +130,7 @@ class PlanEnforcer:
         result = await db.execute(
             select(func.count(Order.id)).where(
                 Order.tenant_id == self.tenant_id,
-                Order.status == OrderStatus.OPEN,
+                Order.status == OrderStatus.OPEN.value,
             )
         )
         count = result.scalar_one()

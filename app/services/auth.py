@@ -10,6 +10,7 @@ Token strategy:
 """
 import hashlib
 import uuid
+import bcrypt
 import secrets
 from datetime import datetime, timezone, timedelta
 
@@ -26,23 +27,32 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ── Password ───────────────────────────────────────────────────────────────────
 
-def _prepare(plain: str) -> str:
-    """
-    SHA-256 the password before bcrypt.
-    Bcrypt silently truncates (or errors) at 72 bytes. Pre-hashing produces a
-    64-character hex string that is always safely under the limit, regardless
-    of how long the original password is.
-    """
-    return hashlib.sha256(plain.encode()).hexdigest()
+# def _prepare(plain: str) -> str:
+#     """
+#     SHA-256 the password before bcrypt.
+#     Bcrypt silently truncates (or errors) at 72 bytes. Pre-hashing produces a
+#     64-character hex string that is always safely under the limit, regardless
+#     of how long the original password is.
+#     """
+#     return hashlib.sha256(plain.encode()).hexdigest()
 
+
+# def hash_password(plain: str) -> str:
+#     return pwd_context.hash(_prepare(plain))
+
+
+# def verify_password(plain: str, hashed: str) -> bool:
+#     return pwd_context.verify(_prepare(plain), hashed)
+
+
+def _prepare(plain: str) -> bytes:
+    return hashlib.sha256(plain.encode()).hexdigest().encode()
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(_prepare(plain))
-
+    return bcrypt.hashpw(_prepare(plain), bcrypt.gensalt()).decode()
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(_prepare(plain), hashed)
-
+    return bcrypt.checkpw(_prepare(plain), hashed.encode())
 
 # ── Access Token ───────────────────────────────────────────────────────────────
 

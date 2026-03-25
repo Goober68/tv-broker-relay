@@ -64,7 +64,7 @@ async def _poll_fills_once():
         # Load all OPEN orders with their tenant info
         result = await db.execute(
             select(Order)
-            .where(Order.status == OrderStatus.OPEN)
+            .where(Order.status == OrderStatus.OPEN.value)
             .where(Order.broker_order_id.isnot(None))
         )
         open_orders = result.scalars().all()
@@ -375,7 +375,7 @@ async def _send_summary_for_tenant(db: AsyncSession, tenant: Tenant, today) -> N
     order_result = await db.execute(
         select(func.count(Order.id)).where(
             Order.tenant_id == tenant.id,
-            Order.status == OrderStatus.FILLED,
+            Order.status == OrderStatus.FILLED.value,
             Order.updated_at >= today_start,
         )
     )
