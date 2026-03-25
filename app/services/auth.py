@@ -14,34 +14,31 @@ import secrets
 from datetime import datetime, timezone, timedelta
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.config import get_settings
 from app.models.tenant import Tenant, RefreshToken
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
 # ── Password ───────────────────────────────────────────────────────────────────
 
-def _prepare(plain: str) -> str:
+def _prepare(plain: str) -> bytes:
     """
     SHA-256 the password before bcrypt.
-    Bcrypt silently truncates (or errors) at 72 bytes. Pre-hashing produces a
-    64-character hex string that is always safely under the limit, regardless
-    of how long the original password is.
+    Bcrypt truncates at 72 bytes. Pre-hashing produces a 64-char hex string —
+    always safely under the limit. Also avoids passlib/bcrypt 4.x issues on
+    Python 3.14+.
     """
-    return hashlib.sha256(plain.encode()).hexdigest()
+    return hashlib.sha256(plain.encode()).hexdigest().encode()
 
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(_prepare(plain))
+    return _bcrypt.hashpw(_prepare(plain), _bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(_prepare(plain), hashed)
+    return _bcrypt.checkpw(_prepare(plain), hashed.encode())
 
 
 # ── Access Token ───────────────────────────────────────────────────────────────
@@ -194,7 +191,7 @@ async def authenticate_tenant(
     tenant = await get_tenant_by_email(db, email)
     if tenant is None:
         # Run verify anyway to prevent timing attacks leaking valid emails
-        pwd_context.dummy_verify()
+        _bcrypt.checkpw(b'dummy', _bcrypt.hashpw(b'dummy', _bcrypt.gensalt()))
         return None
     if not verify_password(password, tenant.password_hash):
         return None

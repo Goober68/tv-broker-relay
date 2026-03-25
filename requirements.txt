@@ -11,7 +11,7 @@ python-dotenv==1.0.1
 ib_insync==0.9.86
 ratelimit==2.2.1
 tenacity==8.3.0
-passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
 python-jose[cryptography]==3.3.0
 cryptography==42.0.8
 stripe==10.5.0
