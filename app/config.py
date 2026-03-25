@@ -5,6 +5,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://relay:relay@localhost:5432/relay"
+    postgres_password: str = "sBerk8me$"  # used by docker-compose, not the app directly
 
     # ── JWT ───────────────────────────────────────────────────────────────────
     jwt_secret: str = "change-me-in-production"

@@ -4,7 +4,8 @@ WORKDIR /frontend
 COPY frontend/package.json ./
 RUN npm install --frozen-lockfile
 COPY frontend/ ./
-RUN npm run build
+# RUN npm run build
+RUN node node_modules/vite/bin/vite.js build --outDir /frontend/dist
 # Output lands in /frontend/../app/static (via vite.config.js outDir: '../app/static')
 # But since we're in /frontend, outDir resolves to /app/static — we'll copy below.
 
