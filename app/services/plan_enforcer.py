@@ -16,6 +16,7 @@ Usage in order processor:
 Usage in broker accounts router:
     enforcer.check_broker_account_limit(current_count)
 """
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -45,7 +46,7 @@ class PlanEnforcer:
     All check_* methods raise PlanLimitExceeded with a user-facing message.
     """
 
-    def __init__(self, plan: Plan, subscription: Subscription, tenant_id: int):
+    def __init__(self, plan: Plan, subscription: Subscription, tenant_id: uuid.UUID):
         self.plan = plan
         self.subscription = subscription
         self.tenant_id = tenant_id
@@ -55,7 +56,7 @@ class PlanEnforcer:
         self.max_daily_loss = plan.max_daily_loss or settings.max_daily_loss
 
     @classmethod
-    async def load(cls, tenant_id: int, db: AsyncSession) -> "PlanEnforcer":
+    async def load(cls, tenant_id: uuid.UUID, db: AsyncSession) -> "PlanEnforcer":
         """Load the tenant's current subscription and plan. Creates Free sub if none exists."""
         sub = await get_or_create_subscription(db, tenant_id)
         # Eagerly load the plan

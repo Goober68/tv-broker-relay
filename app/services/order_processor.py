@@ -1,3 +1,4 @@
+import uuid
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -27,12 +28,12 @@ def _cleanup_dedup_cache(window_seconds: int):
         del _recent_signals[k]
 
 
-def _dedup_key(tenant_id: int, payload: WebhookPayload) -> str:
+def _dedup_key(tenant_id: uuid.UUID, payload: WebhookPayload) -> str:
     return f"{tenant_id}:{payload.broker}:{payload.account}:{payload.symbol}:{payload.action}:{payload.quantity}"
 
 
 async def _get_pending_exposure(
-    db: AsyncSession, tenant_id: int, broker: str, account: str, symbol: str
+    db: AsyncSession, tenant_id: uuid.UUID, broker: str, account: str, symbol: str
 ) -> float:
     result = await db.execute(
         select(Order).where(
@@ -54,7 +55,7 @@ async def _get_pending_exposure(
 async def process_webhook(
     db: AsyncSession,
     payload: WebhookPayload,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     enforcer: PlanEnforcer | None = None,
 ) -> Order:
     """

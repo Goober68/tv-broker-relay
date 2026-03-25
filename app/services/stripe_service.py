@@ -13,6 +13,7 @@ a tenant changes their email).
 
 Stripe API docs: https://stripe.com/docs/api
 """
+import uuid
 import stripe
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +45,7 @@ def _stripe_client() -> stripe.StripeClient:
 
 async def get_or_create_stripe_customer(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     email: str,
 ) -> str:
     """
@@ -74,7 +75,7 @@ async def get_or_create_stripe_customer(
 
 async def create_checkout_session(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     email: str,
     plan_name: str,
 ) -> str:
@@ -132,7 +133,7 @@ async def create_checkout_session(
 
 async def create_portal_session(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     email: str,
     return_url: str,
 ) -> str:

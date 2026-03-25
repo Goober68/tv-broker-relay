@@ -10,6 +10,7 @@ Usage:
     async def delete_tenant(tenant: Tenant = Depends(require_admin)):
         ...
 """
+import uuid
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
@@ -40,7 +41,7 @@ async def get_current_tenant(
     except JWTError:
         raise _401
 
-    tenant_id = int(payload["sub"])
+    tenant_id = uuid.UUID(payload["sub"])
     tenant = await get_tenant_by_id(db, tenant_id)
     if tenant is None or not tenant.is_active:
         raise _401

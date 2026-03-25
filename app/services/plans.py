@@ -9,6 +9,7 @@ Plan limits:
   Pro:        4 brokers, 2000 orders/month, 50 open orders, 60 req/min, all types
   Enterprise: unlimited brokers, unlimited orders, unlimited open, 300 req/min, all types
 """
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -83,14 +84,14 @@ async def get_plan_by_name(db: AsyncSession, name: str) -> Plan | None:
     return result.scalar_one_or_none()
 
 
-async def get_subscription(db: AsyncSession, tenant_id: int) -> Subscription | None:
+async def get_subscription(db: AsyncSession, tenant_id: uuid.UUID) -> Subscription | None:
     result = await db.execute(
         select(Subscription).where(Subscription.tenant_id == tenant_id)
     )
     return result.scalar_one_or_none()
 
 
-async def get_or_create_subscription(db: AsyncSession, tenant_id: int) -> Subscription:
+async def get_or_create_subscription(db: AsyncSession, tenant_id: uuid.UUID) -> Subscription:
     """
     Return the tenant's subscription, creating a Free plan subscription if none exists.
     Called on every webhook request — must be fast.
@@ -117,7 +118,7 @@ async def get_or_create_subscription(db: AsyncSession, tenant_id: int) -> Subscr
 
 async def assign_plan(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     plan_name: str,
     stripe_customer_id: str | None = None,
     stripe_subscription_id: str | None = None,
@@ -144,7 +145,7 @@ async def assign_plan(
     return sub
 
 
-async def increment_order_count(db: AsyncSession, tenant_id: int) -> None:
+async def increment_order_count(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """Increment the monthly order counter. Called after a successful order submission."""
     sub = await get_subscription(db, tenant_id)
     if sub:
@@ -152,7 +153,7 @@ async def increment_order_count(db: AsyncSession, tenant_id: int) -> None:
         await db.flush()
 
 
-async def reset_period_counter(db: AsyncSession, tenant_id: int) -> None:
+async def reset_period_counter(db: AsyncSession, tenant_id: uuid.UUID) -> None:
     """Reset the monthly counter. Called by Stripe billing cycle webhook."""
     sub = await get_subscription(db, tenant_id)
     if sub:

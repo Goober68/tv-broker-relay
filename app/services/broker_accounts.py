@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -20,7 +21,7 @@ def _validate_credentials(broker: str, creds: dict) -> None:
 
 async def create_broker_account(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     broker: str,
     account_alias: str,
     credentials: dict,
@@ -54,7 +55,7 @@ async def create_broker_account(
     return account
 
 
-async def list_broker_accounts(db: AsyncSession, tenant_id: int) -> list[BrokerAccount]:
+async def list_broker_accounts(db: AsyncSession, tenant_id: uuid.UUID) -> list[BrokerAccount]:
     result = await db.execute(
         select(BrokerAccount)
         .where(BrokerAccount.tenant_id == tenant_id)
@@ -64,7 +65,7 @@ async def list_broker_accounts(db: AsyncSession, tenant_id: int) -> list[BrokerA
 
 
 async def get_broker_account(
-    db: AsyncSession, account_id: int, tenant_id: int
+    db: AsyncSession, account_id: int, tenant_id: uuid.UUID
 ) -> BrokerAccount | None:
     result = await db.execute(
         select(BrokerAccount).where(
@@ -78,7 +79,7 @@ async def get_broker_account(
 async def update_broker_account_credentials(
     db: AsyncSession,
     account_id: int,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     credentials: dict,
     display_name: str | None = None,
 ) -> BrokerAccount | None:
@@ -94,7 +95,7 @@ async def update_broker_account_credentials(
 
 
 async def delete_broker_account(
-    db: AsyncSession, account_id: int, tenant_id: int
+    db: AsyncSession, account_id: int, tenant_id: uuid.UUID
 ) -> bool:
     account = await get_broker_account(db, account_id, tenant_id)
     if account is None:

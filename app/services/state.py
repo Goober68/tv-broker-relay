@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -24,7 +25,7 @@ def _resolve_multiplier(order: Order) -> float:
 
 
 async def get_or_create_position(
-    db: AsyncSession, tenant_id: int, broker: str, account: str, symbol: str
+    db: AsyncSession, tenant_id: uuid.UUID, broker: str, account: str, symbol: str
 ) -> Position:
     result = await db.execute(
         select(Position).where(

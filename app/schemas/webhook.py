@@ -9,7 +9,7 @@ from app.models.order import (
 
 class WebhookPayload(BaseModel):
     secret: str
-    broker: Literal["oanda", "ibkr", "tradovate", "etrade"]
+    broker: Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic"]
     account: str = "primary"
     action: OrderAction
     symbol: str

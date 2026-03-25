@@ -5,7 +5,6 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://relay:relay@localhost:5432/relay"
-    postgres_password: str = "sBerk8me$"  # used by docker-compose, not the app directly
 
     # ── JWT ───────────────────────────────────────────────────────────────────
     jwt_secret: str = "change-me-in-production"
@@ -62,6 +61,11 @@ class Settings(BaseSettings):
     etrade_oauth_token_secret: str = ""
     etrade_account_id: str = ""
     etrade_base_url: str = "https://apisb.etrade.com"
+    rithmic_username: str = ""
+    rithmic_password: str = ""
+    rithmic_app_key: str = ""
+    rithmic_system_name: str = "Rithmic Paper Trading"
+    rithmic_base_url: str = "https://paper-rithmic-rapi.rithmic.com" 
 
     class Config:
         env_file = ".env"

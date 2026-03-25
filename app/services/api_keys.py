@@ -10,6 +10,7 @@ Key format:  tvr_{tenant_id}_{48 url-safe random bytes}
 Storage: SHA-256 hash stored in DB. Raw key returned once at creation only.
 Lookup: hash the presented key, query by hash. O(1), constant-time compare.
 """
+import uuid
 import hashlib
 import secrets
 from datetime import datetime, timezone
@@ -20,7 +21,7 @@ from sqlalchemy import select, update
 from app.models.api_key import ApiKey
 
 
-def _generate_raw_key(tenant_id: int) -> str:
+def _generate_raw_key(tenant_id: uuid.UUID) -> str:
     random_part = secrets.token_urlsafe(48)
     return f"tvr_{tenant_id}_{random_part}"
 
@@ -35,7 +36,7 @@ def _key_prefix(raw: str) -> str:
 
 
 async def create_api_key(
-    db: AsyncSession, tenant_id: int, name: str
+    db: AsyncSession, tenant_id: uuid.UUID, name: str
 ) -> tuple[ApiKey, str]:
     """
     Create and persist a new API key.
@@ -55,7 +56,7 @@ async def create_api_key(
 
 
 async def verify_api_key(
-    db: AsyncSession, raw_key: str, tenant_id: int
+    db: AsyncSession, raw_key: str, tenant_id: uuid.UUID
 ) -> ApiKey | None:
     """
     Verify a raw key belongs to the given tenant and is active.
@@ -83,7 +84,7 @@ async def verify_api_key(
     return key
 
 
-async def list_api_keys(db: AsyncSession, tenant_id: int) -> list[ApiKey]:
+async def list_api_keys(db: AsyncSession, tenant_id: uuid.UUID) -> list[ApiKey]:
     result = await db.execute(
         select(ApiKey)
         .where(ApiKey.tenant_id == tenant_id)
@@ -92,7 +93,7 @@ async def list_api_keys(db: AsyncSession, tenant_id: int) -> list[ApiKey]:
     return list(result.scalars().all())
 
 
-async def revoke_api_key(db: AsyncSession, key_id: int, tenant_id: int) -> bool:
+async def revoke_api_key(db: AsyncSession, key_id: int, tenant_id: uuid.UUID) -> bool:
     """Revoke a key. Returns False if key not found or doesn't belong to tenant."""
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.tenant_id == tenant_id)

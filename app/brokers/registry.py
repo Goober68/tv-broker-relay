@@ -10,6 +10,7 @@ from app.brokers.oanda import OandaBroker
 from app.brokers.ibkr import IBKRBroker
 from app.brokers.tradovate import TradovateBroker
 from app.brokers.etrade import EtradeBroker
+from app.brokers.rithmic import RithmicBroker
 from app.models.broker_account import BrokerAccount
 from app.services.credentials import decrypt_credentials
 
@@ -57,6 +58,8 @@ async def get_broker_for_tenant(
             return TradovateBroker.from_credentials(creds)
         case "etrade":
             return EtradeBroker.from_credentials(creds)
+        case "rithmic":
+            return RithmicBroker.from_credentials(creds)
         case _:
             raise ValueError(f"Unknown broker: {broker_name!r}")
 
@@ -68,4 +71,5 @@ def get_broker(name: str) -> BrokerBase:
         case "ibkr":      return IBKRBroker.from_settings()
         case "tradovate": return TradovateBroker.from_settings()
         case "etrade":    return EtradeBroker.from_settings()
+        case "rithmic":   return RithmicBroker.from_settings()
         case _:           raise ValueError(f"Unknown broker: {name!r}")

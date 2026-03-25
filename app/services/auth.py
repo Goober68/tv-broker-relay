@@ -9,7 +9,7 @@ Token strategy:
     are immediately revoked (token family invalidation).
 """
 import hashlib
-import bcrypt
+import uuid
 import secrets
 from datetime import datetime, timezone, timedelta
 
@@ -21,22 +21,32 @@ from sqlalchemy import select, update
 from app.config import get_settings
 from app.models.tenant import Tenant, RefreshToken
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 # ── Password ───────────────────────────────────────────────────────────────────
 
-def _prepare(plain: str) -> bytes:
-    return hashlib.sha256(plain.encode()).hexdigest().encode()
+def _prepare(plain: str) -> str:
+    """
+    SHA-256 the password before bcrypt.
+    Bcrypt silently truncates (or errors) at 72 bytes. Pre-hashing produces a
+    64-character hex string that is always safely under the limit, regardless
+    of how long the original password is.
+    """
+    return hashlib.sha256(plain.encode()).hexdigest()
+
 
 def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(_prepare(plain), bcrypt.gensalt()).decode()
+    return pwd_context.hash(_prepare(plain))
+
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(_prepare(plain), hashed.encode())
+    return pwd_context.verify(_prepare(plain), hashed)
 
 
 # ── Access Token ───────────────────────────────────────────────────────────────
 
-def create_access_token(tenant_id: int, is_admin: bool = False) -> str:
+def create_access_token(tenant_id: uuid.UUID, is_admin: bool = False) -> str:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.jwt_access_token_expire_minutes
@@ -72,7 +82,7 @@ def _hash_token(raw: str) -> str:
 
 async def create_refresh_token(
     db: AsyncSession,
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> str:
@@ -152,7 +162,7 @@ async def revoke_refresh_token(db: AsyncSession, raw_token: str) -> bool:
     return True
 
 
-async def revoke_all_refresh_tokens(db: AsyncSession, tenant_id: int) -> int:
+async def revoke_all_refresh_tokens(db: AsyncSession, tenant_id: uuid.UUID) -> int:
     """Revoke all active refresh tokens for a tenant (logout everywhere)."""
     result = await db.execute(
         update(RefreshToken)
@@ -172,7 +182,7 @@ async def get_tenant_by_email(db: AsyncSession, email: str) -> Tenant | None:
     return result.scalar_one_or_none()
 
 
-async def get_tenant_by_id(db: AsyncSession, tenant_id: int) -> Tenant | None:
+async def get_tenant_by_id(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant | None:
     result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     return result.scalar_one_or_none()
 
@@ -184,7 +194,7 @@ async def authenticate_tenant(
     tenant = await get_tenant_by_email(db, email)
     if tenant is None:
         # Run verify anyway to prevent timing attacks leaking valid emails
-        bcrypt.checkpw(b"dummy", bcrypt.hashpw(b"dummy", bcrypt.gensalt()))
+        pwd_context.dummy_verify()
         return None
     if not verify_password(password, tenant.password_hash):
         return None
