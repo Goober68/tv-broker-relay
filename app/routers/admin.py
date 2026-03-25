@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+import uuid
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -55,7 +56,7 @@ class SubscriptionOut(BaseModel):
 
 
 class TenantAdminOut(BaseModel):
-    id: int
+    id: uuid.UUID
     email: str
     is_active: bool
     is_admin: bool

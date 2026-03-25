@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, Cookie
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import uuid
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Annotated
 
@@ -54,7 +55,7 @@ class TokenResponse(BaseModel):
 
 
 class TenantOut(BaseModel):
-    id: int
+    id: uuid.UUID
     email: str
     is_admin: bool
     email_verified: bool

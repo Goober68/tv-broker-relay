@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from sqlalchemy import String, Boolean, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.db import Base
 
@@ -7,7 +9,7 @@ from app.models.db import Base
 class Tenant(Base):
     __tablename__ = "tenants"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -44,8 +46,8 @@ class Tenant(Base):
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
     token_hash: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -4,6 +4,8 @@ from sqlalchemy import (
     Integer, Float, JSON, UniqueConstraint
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from app.models.db import Base
 
 
@@ -65,7 +67,7 @@ class Subscription(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
     plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"))
 
     # Stripe identifiers — null for free/manually assigned plans

@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from app.models.db import Base
 from typing import Literal
 
-BrokerName = Literal["oanda", "ibkr", "tradovate", "etrade"]
+BrokerName = Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic"]
 
 BROKER_CREDENTIAL_FIELDS: dict[str, list[str]] = {
     "oanda":     ["api_key", "account_id", "base_url"],
@@ -55,7 +57,7 @@ class BrokerAccount(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
     broker: Mapped[str] = mapped_column(String(32))
     account_alias: Mapped[str] = mapped_column(String(64))
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)

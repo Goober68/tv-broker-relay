@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from sqlalchemy import String, Integer, Float, DateTime, Text, ForeignKey, Index, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
 from app.models.db import Base
 
 
@@ -21,7 +23,7 @@ class WebhookDelivery(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
 
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
 
     # Request metadata
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)

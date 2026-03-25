@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -90,7 +91,7 @@ def _safe_payload_str(payload: WebhookPayload | None, raw_body: bytes) -> str | 
 
 @router.post("/webhook/{tenant_id}", response_model=OrderResponse)
 async def receive_webhook(
-    tenant_id: int,
+    tenant_id: uuid.UUID,
     request: Request,
     x_webhook_secret: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
