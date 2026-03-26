@@ -260,7 +260,7 @@ async def _poll_pnl_once():
 
     Only runs for brokers that implement get_open_positions_pnl().
     """
-    SUPPORTED = {"oanda", "tradovate", "etrade"}
+    SUPPORTED = {"oanda", "tradovate", "etrade", "tradestation", "alpaca", "tastytrade"}
 
     async with AsyncSessionLocal() as db:
         # Load all non-flat positions for supported brokers

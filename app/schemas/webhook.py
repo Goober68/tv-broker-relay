@@ -9,7 +9,7 @@ from app.models.order import (
 
 class WebhookPayload(BaseModel):
     secret: str | None = None  # API key — used when X-Webhook-Secret header is not available
-    broker: Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic"]
+    broker: Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic", "tradestation", "alpaca", "tastytrade"]
     account: str = "primary"
     action: OrderAction
     symbol: str
@@ -61,6 +61,15 @@ class WebhookPayload(BaseModel):
     stop_loss: float | None = None
     take_profit: float | None = None
     trailing_distance: float | None = None
+
+    # SL/TP unit type — controls how stop_loss, take_profit, trailing_distance are interpreted.
+    # If omitted, the relay infers the type from instrument_type (legacy behaviour).
+    #
+    #   "absolute" — price levels (e.g. 1.07500, 148.750, 20900.0)
+    #   "ticks"    — number of ticks from entry (futures only, e.g. 20 ticks on NQ = 5 pts)
+    #   "pips"     — number of pips from entry (forex only, e.g. 50 pips on EUR_USD = 0.0050)
+    #   "points"   — raw price points from entry (any instrument, e.g. 2.50)
+    sl_tp_type: Literal["absolute", "ticks", "pips", "points"] | None = None
 
     @field_validator("symbol")
     @classmethod

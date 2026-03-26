@@ -53,7 +53,10 @@ BROKER_INSTRUMENT_SUPPORT: dict[str, set[str]] = {
     "ibkr":      {"equity", "future", "forex", "option"},
     "tradovate": {"future"},
     "etrade":    {"equity", "option"},
-    "rithmic":   {"future"},
+    "rithmic":      {"future"},
+    "tradestation": {"equity", "future", "option"},
+    "alpaca":       {"equity", "option"},
+    "tastytrade":   {"equity", "future", "option"},
 }
 
 # IBKR secType mapping

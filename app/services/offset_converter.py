@@ -163,16 +163,25 @@ class ConvertedLevels:
 
 def convert_sl_tp(
     *,
-    action: str,             # "buy" or "sell"
-    instrument_type: str,    # "future", "forex", "equity", "cfd"
+    action: str,              # "buy" or "sell"
+    instrument_type: str,     # "future", "forex", "equity", "cfd"
     symbol: str,
     entry_price: float | None,
     stop_loss: float | None,
     take_profit: float | None,
     trailing_distance: float | None,
+    sl_tp_type: str | None = None,  # "absolute", "ticks", "pips", "points", or None (infer)
 ) -> ConvertedLevels:
     """
-    Convert SL/TP/trailing values from offsets to absolute price levels.
+    Convert SL/TP/trailing values to absolute price levels.
+
+    If sl_tp_type is provided:
+      "absolute" — values are already price levels, pass through unchanged
+      "ticks"    — convert from tick count to price (futures)
+      "pips"     — convert from pip count to price (forex)
+      "points"   — convert from raw point offset to price (any instrument)
+
+    If sl_tp_type is None, falls back to heuristic inference (legacy behaviour).
 
     Returns ConvertedLevels with absolute prices ready to send to the broker.
     """
@@ -180,48 +189,53 @@ def convert_sl_tp(
 
     def to_absolute(value: float, field: str) -> tuple[float, bool]:
         """Convert a single value. Returns (absolute_price, was_offset)."""
-        if not _is_offset(value, entry_price, instrument_type):
+        # Explicit type overrides heuristic
+        effective_type = sl_tp_type
+        if effective_type == "absolute":
             return value, False
+        if effective_type is None:
+            # Legacy: infer from instrument type and value magnitude
+            if not _is_offset(value, entry_price, instrument_type):
+                return value, False
+            # Inferred to be an offset — treat as ticks/pips based on instrument
+            effective_type = "ticks" if instrument_type == "future" else "pips" if instrument_type == "forex" else "points"
 
-        if instrument_type == "future":
+        # At this point effective_type is one of: ticks, pips, points
+
+        base = entry_price if entry_price else 0.0
+
+        if effective_type == "ticks":
             tick = _tick_size(symbol)
             offset_pts = value * tick
-            base = entry_price if entry_price else 0.0
             if field == "stop_loss":
                 result = base - offset_pts if is_buy else base + offset_pts
             elif field == "take_profit":
                 result = base + offset_pts if is_buy else base - offset_pts
-            else:  # trailing_distance — always positive points
+            else:
                 result = offset_pts
-            logger.debug(
-                f"{symbol} {field}: {value} ticks × {tick} = {offset_pts:.4f} pts → {result:.4f}"
-            )
+            logger.debug(f"{symbol} {field}: {value} ticks × {tick} = {offset_pts:.4f} pts → {result:.4f}")
             return round(result, 4), True
 
-        elif instrument_type == "forex":
+        elif effective_type == "pips":
             pip = _pip_size(symbol)
             offset = value * pip
-            base = entry_price if entry_price else 0.0
             if field == "stop_loss":
                 result = base - offset if is_buy else base + offset
             elif field == "take_profit":
                 result = base + offset if is_buy else base - offset
             else:
                 result = offset
-            logger.debug(
-                f"{symbol} {field}: {value} pips × {pip} = {offset:.6f} → {result:.6f}"
-            )
+            logger.debug(f"{symbol} {field}: {value} pips × {pip} = {offset:.6f} → {result:.6f}")
             return round(result, 6), True
 
-        else:
-            # equity / cfd — points = raw price offset
-            base = entry_price if entry_price else 0.0
+        else:  # points — raw price offset
             if field == "stop_loss":
                 result = base - value if is_buy else base + value
             elif field == "take_profit":
                 result = base + value if is_buy else base - value
             else:
                 result = value
+            logger.debug(f"{symbol} {field}: {value} points → {result:.4f}")
             return round(result, 4), True
 
     sl, sl_was = (to_absolute(stop_loss, "stop_loss")

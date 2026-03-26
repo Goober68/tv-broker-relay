@@ -6,7 +6,7 @@ import uuid
 from app.models.db import Base
 from typing import Literal
 
-BrokerName = Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic"]
+BrokerName = Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic", "tradestation", "alpaca", "tastytrade"]
 
 BROKER_CREDENTIAL_FIELDS: dict[str, list[str]] = {
     "oanda":     ["api_key", "account_id", "base_url"],

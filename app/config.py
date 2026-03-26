@@ -5,7 +5,6 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://relay:relay@localhost:5432/relay"
-    postgres_password: str = "relay"
 
     # ── JWT ───────────────────────────────────────────────────────────────────
     jwt_secret: str = "change-me-in-production"
@@ -67,7 +66,25 @@ class Settings(BaseSettings):
     rithmic_password: str = ""
     rithmic_app_key: str = ""
     rithmic_system_name: str = "Rithmic Paper Trading"
-    rithmic_base_url: str = "https://paper-rithmic-rapi.rithmic.com" 
+    rithmic_base_url: str = "https://paper-rithmic-rapi.rithmic.com"
+
+    # TradeStation
+    tradestation_client_id:     str = ""
+    tradestation_client_secret: str = ""
+    tradestation_refresh_token: str = ""
+    tradestation_account_id:    str = ""
+    tradestation_base_url:      str = "https://api.tradestation.com"
+
+    # Alpaca
+    alpaca_api_key:    str = ""
+    alpaca_api_secret: str = ""
+    alpaca_base_url:   str = "https://paper-api.alpaca.markets"  # paper by default
+
+    # Tastytrade
+    tastytrade_username:   str = ""
+    tastytrade_password:   str = ""
+    tastytrade_account_id: str = ""
+    tastytrade_base_url:   str = "https://api.tastytrade.com" 
 
     class Config:
         env_file = ".env"

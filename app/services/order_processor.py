@@ -153,6 +153,7 @@ async def process_webhook(
         stop_loss=payload.stop_loss,
         take_profit=payload.take_profit,
         trailing_distance=payload.trailing_distance,
+        sl_tp_type=payload.sl_tp_type,
     )
     if levels.stop_loss_was_offset or levels.take_profit_was_offset or levels.trailing_was_offset:
         logger.info(
