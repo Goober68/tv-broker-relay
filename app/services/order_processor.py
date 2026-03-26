@@ -11,8 +11,8 @@ from app.brokers.registry import get_broker_for_tenant
 from app.services.state import get_or_create_position, apply_fill_to_position
 from app.services.plans import increment_order_count
 from app.services.plan_enforcer import PlanEnforcer
-from app.services.offset_converter import convert_sl_tp
 from app.config import get_settings
+from app.services.offset_converter import convert_sl_tp
 
 logger = logging.getLogger(__name__)
 
