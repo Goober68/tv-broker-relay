@@ -162,6 +162,7 @@ class DeliveryOut(BaseModel):
     error_detail: str | None
     duration_ms: float | None
     raw_payload: str | None
+    user_agent: str | None = None
 
     class Config:
         from_attributes = True
