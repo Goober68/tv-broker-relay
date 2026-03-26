@@ -212,7 +212,18 @@ def convert_sl_tp(
 
         # At this point effective_type is one of: ticks, pips, points
 
-        base = entry_price if entry_price else 0.0
+        # Without an entry price we cannot calculate directional offsets.
+        # Pass the value through unchanged — caller must provide absolute prices
+        # for market orders when using offset sl_tp_type.
+        if entry_price is None:
+            logger.warning(
+                f"{symbol}: sl_tp_type='{effective_type}' but entry_price is None "
+                f"(market order). Treating {field}={value} as absolute price. "
+                f"Pass absolute SL/TP for market orders or use sl_tp_type='absolute'."
+            )
+            return value, False
+
+        base = entry_price
 
         if effective_type == "ticks":
             tick = _tick_size(symbol)

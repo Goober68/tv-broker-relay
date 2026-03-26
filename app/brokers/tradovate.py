@@ -165,7 +165,7 @@ class TradovateBroker(BrokerBase):
             "timeInForce": tif,
             "isAutomated": True,
         }
-        if order.price:
+        if order.price and order.order_type != OrderType.MARKET:
             base_body["price"] = order.price
         if order.time_in_force == TimeInForce.GTD and order.expire_at:
             base_body["expireTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%SZ")
