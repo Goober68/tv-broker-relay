@@ -134,6 +134,11 @@ class Order(Base):
     take_profit:       Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_distance: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Tradovate native trailing stop fields
+    trail_trigger:     Mapped[float | None] = mapped_column(Float, nullable=True)
+    trail_dist:        Mapped[float | None] = mapped_column(Float, nullable=True)
+    trail_update:      Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # State
     status:          Mapped[str]         = mapped_column(SAEnum(OrderStatus, **_ENUM_KWARGS), default=OrderStatus.PENDING)
     broker_order_id:   Mapped[str | None]  = mapped_column(String(128), nullable=True)

@@ -154,6 +154,9 @@ async def process_webhook(
         stop_loss=payload.stop_loss,
         take_profit=payload.take_profit,
         trailing_distance=payload.trailing_distance,
+        trail_trigger=payload.trail_trigger,
+        trail_dist=payload.trail_dist,
+        trail_update=payload.trail_update,
         sl_tp_type=payload.sl_tp_type,
     )
     if levels.stop_loss_was_offset or levels.take_profit_was_offset or levels.trailing_was_offset:
@@ -187,6 +190,9 @@ async def process_webhook(
         stop_loss=levels.stop_loss,
         take_profit=levels.take_profit,
         trailing_distance=levels.trailing_distance,
+        trail_trigger=levels.trail_trigger,
+        trail_dist=levels.trail_dist,
+        trail_update=levels.trail_update,
         comment=payload.comment,
         status=OrderStatus.PENDING,
         raw_payload=json.dumps(payload.model_dump(exclude={"secret"}, mode="json")),

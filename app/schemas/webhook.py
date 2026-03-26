@@ -60,9 +60,15 @@ class WebhookPayload(BaseModel):
     # Risk management
     stop_loss: float | None = None
     take_profit: float | None = None
-    trailing_distance: float | None = None
+    trailing_distance: float | None = None  # legacy — kept for backward compat
 
-    # SL/TP unit type — controls how stop_loss, take_profit, trailing_distance are interpreted.
+    # Trailing stop (Tradovate) — all values in units specified by sl_tp_type
+    trail_trigger: float | None = None  # price level where trail activates (stopPrice)
+    trail_dist:    float | None = None  # trailing distance (trailPrice)
+    trail_update:  float | None = None  # minimum move before trail updates (step)
+
+    # SL/TP unit type — controls how stop_loss, take_profit, trailing_distance,
+    # trail_trigger, trail_dist, and trail_update are interpreted.
     # If omitted, the relay infers the type from instrument_type (legacy behaviour).
     #
     #   "absolute" — price levels (e.g. 1.07500, 148.750, 20900.0)
@@ -164,9 +170,10 @@ class WebhookPayload(BaseModel):
 
     @model_validator(mode="after")
     def sl_and_tsl_mutually_exclusive(self) -> "WebhookPayload":
-        if self.stop_loss is not None and self.trailing_distance is not None:
+        has_trail = self.trailing_distance is not None or self.trail_dist is not None
+        if self.stop_loss is not None and has_trail:
             raise ValueError(
-                "stop_loss and trailing_distance are mutually exclusive"
+                "stop_loss and trailing stop (trailing_distance / trail_dist) are mutually exclusive"
             )
         return self
 

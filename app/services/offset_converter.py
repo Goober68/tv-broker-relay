@@ -156,6 +156,9 @@ class ConvertedLevels:
     stop_loss: float | None
     take_profit: float | None
     trailing_distance: float | None
+    trail_trigger: float | None = None
+    trail_dist: float | None = None
+    trail_update: float | None = None
     stop_loss_was_offset: bool = False
     take_profit_was_offset: bool = False
     trailing_was_offset: bool = False
@@ -170,6 +173,9 @@ def convert_sl_tp(
     stop_loss: float | None,
     take_profit: float | None,
     trailing_distance: float | None,
+    trail_trigger: float | None = None,
+    trail_dist: float | None = None,
+    trail_update: float | None = None,
     sl_tp_type: str | None = None,  # "absolute", "ticks", "pips", "points", or None (infer)
 ) -> ConvertedLevels:
     """
@@ -249,10 +255,35 @@ def convert_sl_tp(
     tsl, tsl_was = (to_absolute(trailing_distance, "trailing_distance")
                     if trailing_distance is not None else (None, False))
 
+    # Trail fields:
+    #   trail_trigger — absolute price level (not an offset), pass through unchanged
+    #   trail_dist    — distance in sl_tp_type units, convert to price difference
+    #   trail_update  — distance in sl_tp_type units, convert to price difference
+    #
+    # For trail_dist and trail_update we only want the raw converted distance,
+    # not a directional price level. We use entry_price=0 and action="buy" so
+    # the result is simply: value * tick_size (for ticks) or value * pip_size (for pips)
+    def to_distance(value: float) -> float:
+        """Convert an offset value to a raw price distance (always positive)."""
+        if sl_tp_type == "absolute" or sl_tp_type is None:
+            return value
+        if sl_tp_type == "ticks":
+            return value * _tick_size(symbol)
+        if sl_tp_type == "pips":
+            return value * _pip_size(symbol)
+        return value  # points — already a price distance
+
+    tt = trail_trigger  # always absolute price level
+    td = to_distance(trail_dist)    if trail_dist    is not None else None
+    tu = to_distance(trail_update)  if trail_update  is not None else None
+
     return ConvertedLevels(
         stop_loss=sl,
         take_profit=tp,
         trailing_distance=tsl,
+        trail_trigger=tt,
+        trail_dist=td,
+        trail_update=tu,
         stop_loss_was_offset=sl_was,
         take_profit_was_offset=tp_was,
         trailing_was_offset=tsl_was,

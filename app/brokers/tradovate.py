@@ -145,14 +145,60 @@ class TradovateBroker(BrokerBase):
         if order.time_in_force == TimeInForce.GTD and order.expire_at:
             # Tradovate GTD requires expireTime in ISO 8601 format
             body["expireTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        if order.stop_loss is not None:
-            body["stopLoss"] = {"stopPrice": order.stop_loss}
-        if order.take_profit is not None:
-            body["takeProfit"] = {"limitPrice": order.take_profit}
+        # Tradovate bracket orders — SL, TP, and trailing stop via orderStrategyTypeId=2
+        # Values are raw price differences (not ticks) — offset converter has already
+        # converted from ticks to points before we get here.
+        has_bracket = (
+            order.stop_loss is not None
+            or order.take_profit is not None
+            or order.trail_dist is not None
+        )
+
+        if has_bracket:
+            bracket: dict = {"qty": int(order.quantity)}
+
+            # Profit target — positive = profit (Tradovate convention)
+            if order.take_profit is not None:
+                bracket["profitTarget"] = order.take_profit
+
+            # Stop loss or trailing stop
+            if order.trail_dist is not None:
+                bracket["trailingStop"] = True
+                bracket["stopLoss"] = order.trail_dist
+                # autoTrail: trigger + freq
+                auto_trail = {"stopLoss": order.trail_dist}
+                if order.trail_trigger is not None:
+                    auto_trail["trigger"] = order.trail_trigger
+                if order.trail_update is not None:
+                    auto_trail["freq"] = order.trail_update
+                bracket["autoTrail"] = auto_trail
+            elif order.stop_loss is not None:
+                bracket["trailingStop"] = False
+                bracket["stopLoss"] = order.stop_loss
+
+            import json as _json
+            params = _json.dumps({
+                "entryVersion": {
+                    "orderQty": int(order.quantity),
+                    "orderType": order_type_map[order.order_type],
+                    "timeInForce": tif,
+                },
+                "brackets": [bracket],
+            })
+
+            # Switch to bracket order strategy
+            body["orderStrategyTypeId"] = 2
+            body["params"] = params
+            # Remove fields that go into params instead
+            body.pop("orderQty", None)
+            body.pop("orderType", None)
+            body.pop("timeInForce", None)
 
         async with httpx.AsyncClient(headers=self._headers(token), timeout=15.0) as client:
             try:
-                resp = await client.post(f"{self.base_url}/order/placeorder", json=body)
+                # Bracket orders use /order/placeoso, regular orders use /order/placeorder
+                endpoint = "/order/placeoso" if body.get("orderStrategyTypeId") else "/order/placeorder"
+                resp = await client.post(f"{self.base_url}{endpoint}", json=body)
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("failureReason"):
