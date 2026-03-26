@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { brokerAccounts as brokersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
 import {
@@ -248,10 +248,16 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
 }
 
 function FifoSettings({ account, onRefresh }) {
-  const [enabled, setEnabled]   = useState(account.fifo_randomize || false)
+  const [enabled, setEnabled]     = useState(account.fifo_randomize || false)
   const [maxOffset, setMaxOffset] = useState(account.fifo_max_offset || 3)
-  const [saving, setSaving]     = useState(false)
-  const [saved, setSaved]       = useState(false)
+  const [saving, setSaving]       = useState(false)
+  const [saved, setSaved]         = useState(false)
+
+  // Sync local state when account prop updates after refetch
+  useEffect(() => {
+    setEnabled(account.fifo_randomize || false)
+    setMaxOffset(account.fifo_max_offset || 3)
+  }, [account.fifo_randomize, account.fifo_max_offset])
 
   const handleSave = async () => {
     setSaving(true)
@@ -313,10 +319,15 @@ function FifoSettings({ account, onRefresh }) {
 }
 
 function AutoCloseSettings({ account, onRefresh }) {
-  const [enabled, setEnabled]   = useState(account.auto_close_enabled || false)
-  const [time, setTime]         = useState(account.auto_close_time || '16:50')
-  const [saving, setSaving]     = useState(false)
-  const [saved, setSaved]       = useState(false)
+  const [enabled, setEnabled] = useState(account.auto_close_enabled || false)
+  const [time, setTime]       = useState(account.auto_close_time || '16:50')
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+
+  useEffect(() => {
+    setEnabled(account.auto_close_enabled || false)
+    setTime(account.auto_close_time || '16:50')
+  }, [account.auto_close_enabled, account.auto_close_time])
 
   const handleSave = async () => {
     setSaving(true)
