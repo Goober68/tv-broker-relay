@@ -32,13 +32,19 @@ class TradovateBroker(BrokerBase):
         app_id: str,
         app_version: str,
         base_url: str,
+        device_id: str = "",
+        cid: str = "0",
+        sec: str = "",
         instrument_map: dict | None = None,
     ):
-        self.username = username
-        self.password = password
-        self.app_id = app_id
+        self.username    = username
+        self.password    = password
+        self.app_id      = app_id
         self.app_version = app_version
-        self.base_url = base_url.rstrip("/")
+        self.base_url    = base_url.rstrip("/")
+        self.device_id   = device_id
+        self.cid         = cid
+        self.sec         = sec
         self.instrument_map: dict[str, dict] = instrument_map or {}
         self._access_token: str | None = None
         self._token_expiry: datetime | None = None
@@ -46,12 +52,15 @@ class TradovateBroker(BrokerBase):
     @classmethod
     def from_credentials(cls, creds: dict) -> "TradovateBroker":
         return cls(
-            username=creds["username"],
-            password=creds["password"],
-            app_id=creds["app_id"],
-            app_version=creds.get("app_version", "1.0"),
-            base_url=creds.get("base_url", "https://live.tradovateapi.com/v1"),
-            instrument_map=creds.get("instrument_map"),
+            username       = creds["username"],
+            password       = creds["password"],
+            app_id         = creds["app_id"],
+            app_version    = creds.get("app_version", "1.0"),
+            base_url       = creds.get("base_url", "https://live.tradovateapi.com/v1"),
+            device_id      = creds.get("device_id", ""),
+            cid            = str(creds.get("cid", "0")),
+            sec            = creds.get("sec", ""),
+            instrument_map = creds.get("instrument_map"),
         )
 
     @classmethod
@@ -71,9 +80,13 @@ class TradovateBroker(BrokerBase):
             resp = await client.post(
                 f"{self.base_url}/auth/accesstokenrequest",
                 json={
-                    "name": self.username, "password": self.password,
-                    "appId": self.app_id, "appVersion": self.app_version,
-                    "cid": 0, "sec": "",
+                    "name":       self.username,
+                    "password":   self.password,
+                    "appId":      self.app_id,
+                    "appVersion": self.app_version,
+                    "deviceId":   self.device_id,
+                    "cid":        self.cid,
+                    "sec":        self.sec,
                 },
             )
             resp.raise_for_status()

@@ -11,7 +11,7 @@ BrokerName = Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic", "tradest
 BROKER_CREDENTIAL_FIELDS: dict[str, list[str]] = {
     "oanda":     ["api_key", "account_id", "base_url"],
     "ibkr":      ["gateway_url", "account_id"],
-    "tradovate": ["username", "password", "app_id", "app_version", "base_url"],
+    "tradovate": ["username", "password", "app_id", "app_version", "device_id", "cid", "sec", "base_url"],
     "etrade":    ["consumer_key", "consumer_secret", "oauth_token", "oauth_token_secret",
                   "account_id", "base_url"],
 }
