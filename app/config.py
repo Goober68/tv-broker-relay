@@ -5,6 +5,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://relay:relay@localhost:5432/relay"
+    postgres_password: str = "relay"
 
     # ── JWT ───────────────────────────────────────────────────────────────────
     jwt_secret: str = "change-me-in-production"
@@ -14,7 +15,6 @@ class Settings(BaseSettings):
 
     # ── Credential Encryption ─────────────────────────────────────────────────
     credential_encryption_key: str = "change-me-generate-a-real-fernet-key-=="
-    postgres_password: str = "relay"
 
 
     # ── Stripe ────────────────────────────────────────────────────────────────
