@@ -8,7 +8,7 @@ from app.models.order import (
 
 
 class WebhookPayload(BaseModel):
-    secret: str
+    secret: str | None = None  # API key — used when X-Webhook-Secret header is not available
     broker: Literal["oanda", "ibkr", "tradovate", "etrade", "rithmic"]
     account: str = "primary"
     action: OrderAction

@@ -21,20 +21,39 @@ _403 = HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
 async def _resolve_tenant(
-    tenant_id: uuid.UUID, x_webhook_secret: str | None, db: AsyncSession
+    tenant_id: uuid.UUID,
+    x_webhook_secret: str | None,
+    payload_secret: str | None,
+    db: AsyncSession,
 ) -> Tenant:
-    if not x_webhook_secret:
+    """
+    Authenticate the webhook request.
+
+    Priority:
+      1. X-Webhook-Secret header  — used by paid TradingView plans and other senders
+      2. secret field in payload  — used by free TradingView plans (no custom headers)
+
+    If neither is present, or neither matches, the request is rejected.
+    """
+    secret = x_webhook_secret or payload_secret
+    if not secret:
         raise _403
+
     result = await db.execute(
         select(Tenant).where(Tenant.id == tenant_id, Tenant.is_active == True)  # noqa: E712
     )
     tenant = result.scalar_one_or_none()
     if tenant is None:
         raise _403
-    key = await verify_api_key(db, x_webhook_secret, tenant_id)
+
+    key = await verify_api_key(db, secret, tenant_id)
     if key is None:
-        logger.warning(f"Invalid API key attempt for tenant {tenant_id}")
+        logger.warning(
+            f"Invalid API key attempt for tenant {tenant_id} "
+            f"(via {'header' if x_webhook_secret else 'payload'})"
+        )
         raise _403
+
     return tenant
 
 
@@ -118,7 +137,11 @@ async def receive_webhook(
 
     # Auth
     try:
-        tenant = await _resolve_tenant(tenant_id, x_webhook_secret, db)
+        tenant = await _resolve_tenant(
+            tenant_id, x_webhook_secret,
+            payload_secret=payload.secret if payload else None,
+            db=db,
+        )
     except HTTPException as exc:
         duration_ms = (time.monotonic() - t_start) * 1000
         await _log_delivery(
