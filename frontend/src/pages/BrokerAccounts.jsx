@@ -256,14 +256,7 @@ function FifoSettings({ account, onRefresh }) {
   const handleSave = async () => {
     setSaving(true)
     try {
-      await fetch(`/broker-accounts/${account.id}/fifo`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${(await import('../lib/api')).getAccessToken() || ''}`
-        },
-        body: JSON.stringify({ fifo_randomize: enabled, fifo_max_offset: parseInt(maxOffset) })
-      })
+      await brokersApi.updateFifo(account.id, { fifo_randomize: enabled, fifo_max_offset: parseInt(maxOffset) })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
       onRefresh()

@@ -294,7 +294,7 @@ class FifoUpdate(BaseModel):
     fifo_max_offset: int = 3
 
 
-@router.patch("/broker-accounts/{account_id}/fifo", status_code=200)
+@router.patch("/{account_id}/fifo", status_code=200)
 async def update_fifo(
     account_id: int,
     body: FifoUpdate,
@@ -326,7 +326,7 @@ class AutoCloseUpdate(BaseModel):
     auto_close_time: str | None = None  # "HH:MM" in ET
 
 
-@router.patch("/broker-accounts/{account_id}/auto-close", status_code=200)
+@router.patch("/{account_id}/auto-close", status_code=200)
 async def update_auto_close(
     account_id: int,
     body: AutoCloseUpdate,

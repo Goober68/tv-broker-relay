@@ -151,6 +151,8 @@ export const brokerAccounts = {
   instruments:     (id)          => api.get(`/broker-accounts/${id}/instruments`),
   upsertInstrument:(id, sym, body)=> api.put(`/broker-accounts/${id}/instruments/${sym}`, body),
   deleteInstrument:(id, sym)     => api.delete(`/broker-accounts/${id}/instruments/${sym}`),
+  updateAutoClose: (id, body)    => api.patch(`/broker-accounts/${id}/auto-close`, body),
+  updateFifo:      (id, body)    => api.patch(`/broker-accounts/${id}/fifo`, body),
 }
 
 // ── Orders & Positions ─────────────────────────────────────────────────────────
