@@ -48,6 +48,8 @@ class TradovateBroker(BrokerBase):
         self.instrument_map: dict[str, dict] = instrument_map or {}
         self._access_token: str | None = None
         self._token_expiry: datetime | None = None
+        self._account_id: int | None = None      # numeric account ID fetched after auth
+        self._account_id_map: dict[str, int] = {}  # name → numeric ID map
 
     @classmethod
     def from_credentials(cls, creds: dict) -> "TradovateBroker":
@@ -95,6 +97,25 @@ class TradovateBroker(BrokerBase):
                 raise RuntimeError(f"Tradovate auth failed: {data['errorText']}")
             self._access_token = data["accessToken"]
             self._token_expiry = datetime.now(timezone.utc) + timedelta(minutes=55)
+
+            # Fetch numeric account IDs for all accounts under this login
+            if self._account_id is None:
+                try:
+                    acct_resp = await client.get(
+                        f"{self.base_url}/account/list",
+                        headers={"Authorization": f"Bearer {self._access_token}"},
+                    )
+                    acct_resp.raise_for_status()
+                    accounts = acct_resp.json()
+                    # Store all account name→id mappings
+                    self._account_id_map = {a["name"]: a["id"] for a in accounts}
+                    # Default to first account
+                    if accounts:
+                        self._account_id = accounts[0]["id"]
+                except Exception:
+                    logger.warning("Could not fetch Tradovate numeric account IDs")
+                    self._account_id_map = {}
+
             return self._access_token
 
     def _headers(self, token: str) -> dict:
@@ -131,71 +152,93 @@ class TradovateBroker(BrokerBase):
         }
         tif = _TIF_MAP.get(order.time_in_force, "Day")
 
-        body: dict = {
+        # Get numeric account ID for this account alias
+        acct_id = getattr(self, '_account_id_map', {}).get(order.account) or self._account_id or 0
+
+        base_body: dict = {
             "accountSpec": order.account,
-            "symbol": order.symbol,
-            "action": action_map[order.action],
-            "orderQty": int(order.quantity),  # always whole contracts
-            "orderType": order_type_map[order.order_type],
+            "accountId":   acct_id,  # numeric ID required by placeOSO
+            "symbol":      order.symbol,
+            "action":      action_map[order.action],
+            "orderQty":    int(order.quantity),
+            "orderType":   order_type_map[order.order_type],
             "timeInForce": tif,
             "isAutomated": True,
         }
         if order.price:
-            body["price"] = order.price
+            base_body["price"] = order.price
         if order.time_in_force == TimeInForce.GTD and order.expire_at:
-            # Tradovate GTD requires expireTime in ISO 8601 format
-            body["expireTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        # Tradovate bracket orders — SL, TP, and trailing stop via orderStrategyTypeId=2
-        # Values are raw price differences (not ticks) — offset converter has already
-        # converted from ticks to points before we get here.
-        has_bracket = (
-            order.stop_loss is not None
-            or order.take_profit is not None
-            or order.trail_dist is not None
-        )
+            base_body["expireTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        if has_bracket:
-            bracket: dict = {"qty": int(order.quantity)}
+        has_trail   = order.trail_dist is not None
+        has_bracket = (order.stop_loss is not None
+                       or order.take_profit is not None
+                       or has_trail)
 
-            # Profit target — positive = profit (Tradovate convention)
+        if has_trail:
+            # Trailing stop — use /orderStrategy/startOrderStrategy with params JSON
+            # autoTrail fields: stopLoss=distance, trigger=profit before trail activates,
+            # freq=minimum move before trail steps
+            import json as _json
+            bracket: dict = {
+                "qty":          int(order.quantity),
+                "trailingStop": True,
+                "stopLoss":     order.trail_dist,
+            }
             if order.take_profit is not None:
                 bracket["profitTarget"] = order.take_profit
+            auto_trail: dict = {"stopLoss": order.trail_dist}
+            if order.trail_trigger is not None:
+                auto_trail["trigger"] = order.trail_trigger
+            if order.trail_update is not None:
+                auto_trail["freq"] = order.trail_update
+            bracket["autoTrail"] = auto_trail
 
-            # Stop loss or trailing stop
-            if order.trail_dist is not None:
-                bracket["trailingStop"] = True
-                bracket["stopLoss"] = order.trail_dist
-                # autoTrail: trigger + freq
-                auto_trail = {"stopLoss": order.trail_dist}
-                if order.trail_trigger is not None:
-                    auto_trail["trigger"] = order.trail_trigger
-                if order.trail_update is not None:
-                    auto_trail["freq"] = order.trail_update
-                bracket["autoTrail"] = auto_trail
-            elif order.stop_loss is not None:
-                bracket["trailingStop"] = False
-                bracket["stopLoss"] = order.stop_loss
-
-            import json as _json
-            params = _json.dumps({
+            params_str = _json.dumps({
                 "entryVersion": {
-                    "orderQty": int(order.quantity),
-                    "orderType": order_type_map[order.order_type],
+                    "orderQty":   int(order.quantity),
+                    "orderType":  order_type_map[order.order_type],
                     "timeInForce": tif,
                 },
                 "brackets": [bracket],
             })
+            strat_body = {
+                "accountId":          acct_id,
+                "accountSpec":        order.account,
+                "orderStrategyTypeId": 2,
+                "action":             action_map[order.action],
+                "symbol":             order.symbol,
+                "params":             params_str,
+            }
+            endpoint = "/orderStrategy/startOrderStrategy"
+            body = strat_body
 
-            # Switch to bracket order strategy
-            # placeoso requires orderQty, orderType, timeInForce at top level
-            # AND inside entryVersion in params
-            body["orderStrategyTypeId"] = 2
-            body["params"] = params
+        elif has_bracket:
+            # TP/SL only — use /order/placeOSO with flat bracket1/bracket2 fields
+            close_action = "Sell" if order.action == OrderAction.BUY else "Buy"
+            body = dict(base_body)
+            if order.take_profit is not None:
+                body["bracket1"] = {
+                    "action":    close_action,
+                    "orderType": "Limit",
+                    "price":     order.take_profit,
+                }
+            if order.stop_loss is not None:
+                key = "bracket2" if order.take_profit is not None else "bracket1"
+                body[key] = {
+                    "action":     close_action,
+                    "orderType":  "Stop",
+                    "stopPrice":  order.stop_loss,
+                }
+            endpoint = "/order/placeOSO"
+
+        else:
+            # Plain order — /order/placeOrder
+            body = base_body
+            endpoint = "/order/placeOrder"
 
         async with httpx.AsyncClient(headers=self._headers(token), timeout=15.0) as client:
             try:
-                # Bracket orders use /order/placeoso, regular orders use /order/placeorder
-                endpoint = "/order/placeoso" if body.get("orderStrategyTypeId") else "/order/placeorder"
                 resp = await client.post(f"{self.base_url}{endpoint}", json=body)
                 resp.raise_for_status()
                 data = resp.json()
