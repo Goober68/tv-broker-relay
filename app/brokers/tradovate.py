@@ -187,12 +187,10 @@ class TradovateBroker(BrokerBase):
             })
 
             # Switch to bracket order strategy
-            # orderQty stays at top level — placeoso requires it there AND in entryVersion
+            # placeoso requires orderQty, orderType, timeInForce at top level
+            # AND inside entryVersion in params
             body["orderStrategyTypeId"] = 2
             body["params"] = params
-            # Remove orderType and timeInForce — they live in entryVersion inside params
-            body.pop("orderType", None)
-            body.pop("timeInForce", None)
 
         async with httpx.AsyncClient(headers=self._headers(token), timeout=15.0) as client:
             try:
