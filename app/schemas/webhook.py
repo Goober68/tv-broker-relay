@@ -168,14 +168,7 @@ class WebhookPayload(BaseModel):
                 )
         return self
 
-    @model_validator(mode="after")
-    def sl_and_tsl_mutually_exclusive(self) -> "WebhookPayload":
-        has_trail = self.trailing_distance is not None or self.trail_dist is not None
-        if self.stop_loss is not None and has_trail:
-            raise ValueError(
-                "stop_loss and trailing stop (trailing_distance / trail_dist) are mutually exclusive"
-            )
-        return self
+
 
     @model_validator(mode="after")
     def validate_sl_tp_side(self) -> "WebhookPayload":
