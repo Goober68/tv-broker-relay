@@ -187,10 +187,10 @@ class TradovateBroker(BrokerBase):
             })
 
             # Switch to bracket order strategy
+            # orderQty stays at top level — placeoso requires it there AND in entryVersion
             body["orderStrategyTypeId"] = 2
             body["params"] = params
-            # Remove fields that go into params instead
-            body.pop("orderQty", None)
+            # Remove orderType and timeInForce — they live in entryVersion inside params
             body.pop("orderType", None)
             body.pop("timeInForce", None)
 
