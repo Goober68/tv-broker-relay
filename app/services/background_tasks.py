@@ -208,13 +208,19 @@ async def _reconcile_once():
                     continue  # both flat
 
                 if abs(broker_qty) < 1e-9 and abs(internal_qty) > 0:
-                    # Broker shows flat but we show a position
-                    logger.warning(
-                        f"RECONCILIATION DRIFT — Position {pos.id} "
-                        f"tenant={pos.tenant_id} {pos.broker}/{pos.symbol}: "
-                        f"internal={internal_qty:.4f} broker=0 (broker shows flat!). "
-                        f"Manual review required."
+                    # Broker shows flat — position was closed externally (TP/SL hit,
+                    # manual close, or liquidation). Auto-correct the relay's state.
+                    logger.info(
+                        f"RECONCILIATION: Position {pos.id} "
+                        f"tenant={pos.tenant_id} {pos.broker}/{pos.symbol} "
+                        f"closed at broker (was {internal_qty:.4f}). "
+                        f"Zeroing relay position."
                     )
+                    pos.quantity       = 0.0
+                    pos.unrealized_pnl = None
+                    pos.last_price     = None
+                    pos.last_price_at  = None
+                    await db.commit()
                     continue
 
                 if abs(internal_qty) < 1e-9:
@@ -222,12 +228,15 @@ async def _reconcile_once():
 
                 drift_pct = abs((broker_qty - internal_qty) / internal_qty) * 100
                 if drift_pct > 1.0:
-                    logger.warning(
-                        f"RECONCILIATION DRIFT — Position {pos.id} "
+                    # Partial fill or partial close — auto-correct quantity
+                    logger.info(
+                        f"RECONCILIATION: Position {pos.id} "
                         f"tenant={pos.tenant_id} {pos.broker}/{pos.symbol}: "
                         f"internal={internal_qty:.4f} broker={broker_qty:.4f} "
-                        f"drift={drift_pct:.1f}%. Manual review required."
+                        f"drift={drift_pct:.1f}%. Auto-correcting."
                     )
+                    pos.quantity = broker_qty
+                    await db.commit()
                 else:
                     logger.debug(
                         f"Position {pos.id} {pos.symbol}: OK "
