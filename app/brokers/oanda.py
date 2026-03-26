@@ -6,6 +6,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _fmt_price(symbol: str, price: float) -> str:
+    """
+    Format a price to the correct decimal precision for Oanda.
+    JPY pairs: 3dp  (e.g. 149.500)
+    Most others: 5dp (e.g. 1.07500)
+    """
+    sym = symbol.upper().replace("_", "")
+    # JPY is quote currency for pairs like USD_JPY, EUR_JPY, GBP_JPY
+    if len(sym) >= 6 and sym[3:6] == "JPY":
+        return f"{round(price, 3):.3f}"
+    return f"{round(price, 5):.5f}"
+
+
 class OandaBroker(BrokerBase):
 
     def __init__(self, api_key: str, account_id: str, base_url: str):
@@ -71,28 +84,30 @@ class OandaBroker(BrokerBase):
             body["order"]["timeInForce"] = tif if tif in (TimeInForce.FOK, TimeInForce.IOC) else TimeInForce.FOK
         elif order.order_type == OrderType.LIMIT:
             body["order"]["type"] = "LIMIT"
-            body["order"]["price"] = f"{order.price:.5f}"
+            body["order"]["price"] = _fmt_price(order.symbol, order.price)
             body["order"]["timeInForce"] = tif
             if tif == TimeInForce.GTD and order.expire_at:
                 body["order"]["gtdTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
         elif order.order_type == OrderType.STOP:
             body["order"]["type"] = "STOP"
-            body["order"]["price"] = f"{order.price:.5f}"
+            body["order"]["price"] = _fmt_price(order.symbol, order.price)
             body["order"]["timeInForce"] = tif
             if tif == TimeInForce.GTD and order.expire_at:
                 body["order"]["gtdTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
 
         if order.trailing_distance is not None:
             body["order"]["trailingStopLossOnFill"] = {
-                "distance": f"{order.trailing_distance:.5f}", "timeInForce": "GTC"
+                "distance": _fmt_price(order.symbol, order.trailing_distance), "timeInForce": "GTC"
             }
         elif order.stop_loss is not None:
             body["order"]["stopLossOnFill"] = {
-                "price": f"{order.stop_loss:.5f}", "timeInForce": "GTC"
+                "price": _fmt_price(order.symbol, order.stop_loss),
+                "timeInForce": "GTC",
             }
         if order.take_profit is not None:
             body["order"]["takeProfitOnFill"] = {
-                "price": f"{order.take_profit:.5f}", "timeInForce": "GTC"
+                "price": _fmt_price(order.symbol, order.take_profit),
+                "timeInForce": "GTC",
             }
         return body
 

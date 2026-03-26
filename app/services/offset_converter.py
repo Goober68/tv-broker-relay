@@ -194,6 +194,10 @@ def convert_sl_tp(
         if effective_type == "absolute":
             return value, False
         if effective_type is None:
+            # Without an entry price we cannot safely infer offsets —
+            # market orders have no price field. Default to absolute.
+            if entry_price is None:
+                return value, False
             # Legacy: infer from instrument type and value magnitude
             if not _is_offset(value, entry_price, instrument_type):
                 return value, False
