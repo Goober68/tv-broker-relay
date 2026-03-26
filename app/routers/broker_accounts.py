@@ -7,7 +7,7 @@ from typing import Literal
 
 from app.models.db import get_db
 from app.models.tenant import Tenant
-from app.models.broker_account import BROKER_CREDENTIAL_FIELDS
+from app.models.broker_account import BROKER_CREDENTIAL_FIELDS, BrokerAccount
 from app.dependencies.auth import get_current_tenant
 from app.services.broker_accounts import (
     create_broker_account,
