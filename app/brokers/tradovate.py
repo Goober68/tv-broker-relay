@@ -243,7 +243,11 @@ class TradovateBroker(BrokerBase):
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("failureReason"):
-                    return BrokerOrderResult(success=False, error_message=data["failureReason"])
+                    return BrokerOrderResult(
+                        success=False,
+                        error_message=data["failureReason"],
+                        broker_request=_json.dumps(body, default=str),
+                    )
                 order_id = str(data.get("orderId", ""))
                 is_open = order.order_type != OrderType.MARKET
                 return BrokerOrderResult(
@@ -251,10 +255,18 @@ class TradovateBroker(BrokerBase):
                 )
             except httpx.HTTPStatusError as e:
                 logger.error(f"Tradovate order error {e.response.status_code}: {e.response.text}")
-                return BrokerOrderResult(success=False, error_message=e.response.text)
+                return BrokerOrderResult(
+                    success=False,
+                    error_message=e.response.text,
+                    broker_request=_json.dumps(body, default=str),
+                )
             except Exception as e:
                 logger.exception("Unexpected error submitting to Tradovate")
-                return BrokerOrderResult(success=False, error_message=str(e))
+                return BrokerOrderResult(
+                    success=False,
+                    error_message=str(e),
+                    broker_request=_json.dumps(body, default=str),
+                )
 
     async def _close_position(self, token: str, account: str, symbol: str) -> BrokerOrderResult:
         async with httpx.AsyncClient(headers=self._headers(token), timeout=15.0) as client:
@@ -266,7 +278,11 @@ class TradovateBroker(BrokerBase):
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("failureReason"):
-                    return BrokerOrderResult(success=False, error_message=data["failureReason"])
+                    return BrokerOrderResult(
+                        success=False,
+                        error_message=data["failureReason"],
+                        broker_request=_json.dumps(body, default=str),
+                    )
                 return BrokerOrderResult(success=True, broker_order_id=str(data.get("orderId", "")))
             except Exception as e:
                 return BrokerOrderResult(success=False, error_message=str(e))

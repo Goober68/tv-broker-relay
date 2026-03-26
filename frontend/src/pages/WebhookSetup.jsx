@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../lib/auth-context'
 import { apiKeys as apiKeysApi, orders as ordersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
@@ -263,6 +263,11 @@ function DeliveryRow({ delivery: d }) {
             </div>
           )}
 
+          {/* Broker request body for failed orders */}
+          {d.order_id && d.outcome !== 'success' && (
+            <BrokerRequestDetail orderId={d.order_id} />
+          )}
+
           {/* Order link if created */}
           {d.order_id && (
             <div className="text-xs text-base-400">
@@ -271,6 +276,40 @@ function DeliveryRow({ delivery: d }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function BrokerRequestDetail({ orderId }) {
+  const [request, setRequest] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    ordersApi.list({ limit: 100 })
+      .then(data => {
+        const order = data?.find(o => o.id === orderId)
+        if (order?.broker_request) {
+          try {
+            setRequest(JSON.stringify(JSON.parse(order.broker_request), null, 2))
+          } catch {
+            setRequest(order.broker_request)
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [orderId])
+
+  if (loading || !request) return null
+
+  return (
+    <div>
+      <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-2">
+        Broker request body
+      </div>
+      <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto whitespace-pre-wrap">
+        {request}
+      </pre>
     </div>
   )
 }
