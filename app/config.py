@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     # ── Credential Encryption ─────────────────────────────────────────────────
     credential_encryption_key: str = "change-me-generate-a-real-fernet-key-=="
+    postgres_password: str = "relay"
+
 
     # ── Stripe ────────────────────────────────────────────────────────────────
     stripe_secret_key: str = ""
