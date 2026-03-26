@@ -146,7 +146,7 @@ async def process_webhook(
     )
 
     # Convert SL/TP/trailing from offsets (ticks/pips/points) to absolute prices if needed
-    levels = offset_converter.convert_sl_tp(
+    levels = convert_sl_tp(
         action=payload.action.value,
         instrument_type=payload.instrument_type.value,
         symbol=payload.symbol,
