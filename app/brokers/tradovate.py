@@ -19,7 +19,7 @@ _TIF_MAP = {
     TimeInForce.GTC: "GTC",
     TimeInForce.IOC: "IOC",
     TimeInForce.FOK: "FOK",
-    TimeInForce.GTD: "Day",  # Tradovate doesn't support GTD; fall back to Day
+    TimeInForce.GTD: "GoodTillDate",  # Tradovate native GTD support
 }
 
 
@@ -129,6 +129,9 @@ class TradovateBroker(BrokerBase):
         }
         if order.price:
             body["price"] = order.price
+        if order.time_in_force == TimeInForce.GTD and order.expire_at:
+            # Tradovate GTD requires expireTime in ISO 8601 format
+            body["expireTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%SZ")
         if order.stop_loss is not None:
             body["stopLoss"] = {"stopPrice": order.stop_loss}
         if order.take_profit is not None:

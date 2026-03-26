@@ -25,6 +25,26 @@ class WebhookPayload(BaseModel):
     time_in_force: TimeInForce = TimeInForce.GTC
     expire_at: datetime | None = None
 
+    @field_validator("expire_at", mode="before")
+    @classmethod
+    def parse_expire_at(cls, v):
+        """
+        Accept expire_at as:
+          - ISO 8601 string:  "2025-06-01T14:30:00Z"
+          - Unix ms integer:  1748785800000  (from TradingView {{timenow + 900000}})
+          - Unix s integer:   1748785800
+        """
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            ts = float(v)
+            # Heuristic: values > 1e10 are milliseconds
+            if ts > 1_000_000_000_000:
+                ts = ts / 1000
+            from datetime import timezone
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        return v  # Let pydantic handle ISO string parsing
+
     # Cancel-and-replace
     cancel_replace_id: str | None = None
 
