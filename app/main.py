@@ -57,17 +57,18 @@ async def health():
 # Assets (JS, CSS, images) are served from /assets/* with long cache headers.
 # All other non-API routes return index.html for client-side routing (SPA fallback).
 
+
 if STATIC_DIR.exists():
+    # Serve all static assets
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        # Serve index.html for all non-API, non-asset routes
         index = STATIC_DIR / "index.html"
         if index.exists():
             return FileResponse(index)
-        return {"detail": "Frontend not built. Run: cd frontend && npm run build"}
-else:
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_not_built(full_path: str):
-        return {"detail": "Frontend not built. Run: cd frontend && npm run build"}
+        return {"detail": "Frontend not built"}
