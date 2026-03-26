@@ -213,6 +213,8 @@ async def process_webhook(
 
     if result.success:
         order.broker_order_id = result.broker_order_id
+        if result.client_trade_id:
+            order.client_trade_id = result.client_trade_id
         order.filled_quantity = result.filled_quantity
         order.avg_fill_price = result.avg_fill_price
 

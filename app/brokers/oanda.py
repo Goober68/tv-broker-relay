@@ -52,6 +52,20 @@ class OandaBroker(BrokerBase):
         body: dict = {"order": {"instrument": order.symbol, "units": units}}
         tif = order.time_in_force if order.time_in_force else TimeInForce.GTC
 
+        # Tag every order with a unique clientTradeID so Oanda can identify
+        # individual legs when pyramiding same-size positions (FIFO avoidance).
+        # Uses the relay's internal order ID as the tag — stored on the order row
+        # so we can reference specific trades on close if needed.
+        if order.id:
+            body["order"]["clientExtensions"] = {
+                "id":      f"relay_{order.id}",
+                "comment": order.comment or f"relay_{order.id}",
+            }
+            body["order"]["tradeClientExtensions"] = {
+                "id":      f"relay_{order.id}",
+                "comment": order.comment or f"relay_{order.id}",
+            }
+
         if order.order_type == OrderType.MARKET:
             body["order"]["type"] = "MARKET"
             body["order"]["timeInForce"] = tif if tif in (TimeInForce.FOK, TimeInForce.IOC) else TimeInForce.FOK
@@ -105,11 +119,18 @@ class OandaBroker(BrokerBase):
                 if "orderFillTransaction" in data:
                     fill_tx = data["orderFillTransaction"]
                     fill_price = fill_tx.get("price")
+                    # Extract clientTradeID from the trade opened by this fill
+                    client_trade_id = None
+                    trades_opened = fill_tx.get("tradeOpened", {})
+                    if trades_opened:
+                        client_ext = trades_opened.get("clientExtensions", {})
+                        client_trade_id = client_ext.get("id")
                     return BrokerOrderResult(
                         success=True,
                         broker_order_id=self._extract_order_id(fill_tx),
                         filled_quantity=abs(float(fill_tx.get("units", order.quantity))),
                         avg_fill_price=float(fill_price) if fill_price else None,
+                        client_trade_id=client_trade_id,
                     )
                 elif "orderCancelTransaction" in data:
                     reason = data["orderCancelTransaction"].get("reason", "CANCELLED")

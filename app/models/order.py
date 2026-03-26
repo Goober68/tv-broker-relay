@@ -133,7 +133,8 @@ class Order(Base):
 
     # State
     status:          Mapped[str]         = mapped_column(SAEnum(OrderStatus, **_ENUM_KWARGS), default=OrderStatus.PENDING)
-    broker_order_id: Mapped[str | None]  = mapped_column(String(128), nullable=True)
+    broker_order_id:   Mapped[str | None]  = mapped_column(String(128), nullable=True)
+    client_trade_id:   Mapped[str | None]  = mapped_column(String(128), nullable=True)  # Oanda clientTradeID
     filled_quantity: Mapped[float]       = mapped_column(Float, default=0.0)
     avg_fill_price:  Mapped[float | None] = mapped_column(Float, nullable=True)
 
