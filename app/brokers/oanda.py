@@ -65,6 +65,15 @@ class OandaBroker(BrokerBase):
         body: dict = {"order": {"instrument": order.symbol, "units": units}}
         tif = order.time_in_force if order.time_in_force else TimeInForce.GTC
 
+        # US Oanda accounts are subject to NFA FIFO rules.
+        # OPEN_ONLY  — entry orders always open a new trade (never net against existing)
+        # REDUCE_ONLY — exit orders only reduce/close existing trades (never open opposing)
+        # This combination allows pyramiding while remaining FIFO compliant.
+        if order.action == OrderAction.BUY:
+            body["order"]["positionFill"] = "OPEN_ONLY"
+        elif order.action == OrderAction.SELL:
+            body["order"]["positionFill"] = "REDUCE_ONLY" 
+
         # Tag every order with a unique clientTradeID so Oanda can identify
         # individual legs when pyramiding same-size positions (FIFO avoidance).
         # Uses the relay's internal order ID as the tag — stored on the order row
