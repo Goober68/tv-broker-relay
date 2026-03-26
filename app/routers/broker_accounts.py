@@ -38,7 +38,7 @@ class CreateBrokerAccountRequest(BaseModel):
     def alias_no_spaces(cls, v: str) -> str:
         if " " in v:
             raise ValueError("account_alias must not contain spaces")
-        return v.lower().strip()
+        return v.strip()
 
     class Config:
         json_schema_extra = {
