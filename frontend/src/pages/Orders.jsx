@@ -75,6 +75,7 @@ export default function OrdersPage() {
                   <th>Action</th>
                   <th>Type</th>
                   <th>Qty</th>
+                  <th>Broker Qty</th>
                   <th>Price</th>
                   <th>Fill price</th>
                   <th>Broker</th>
@@ -128,6 +129,16 @@ function OrderRow({ order }) {
       </td>
       <td><span className="text-base-400 text-xs font-mono">{order.order_type}</span></td>
       <td><Mono>{order.quantity.toLocaleString()}</Mono></td>
+      <td>
+        {order.broker_quantity != null && order.broker_quantity !== order.quantity ? (
+          <div className="text-right">
+            <Mono className="text-warn">{order.broker_quantity.toLocaleString()}</Mono>
+            <div className="text-[10px] text-base-600 font-mono">randomized</div>
+          </div>
+        ) : (
+          <Mono className="text-base-500">—</Mono>
+        )}
+      </td>
       <td>
         <Mono className="text-base-400">
           {order.price ? order.price.toFixed(5) : '—'}

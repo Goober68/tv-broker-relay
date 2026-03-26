@@ -59,8 +59,9 @@ class OrderOut(BaseModel):
     take_profit: float | None
     trailing_distance: float | None
     status: str
-    broker_order_id: str | None
-    client_trade_id: str | None = None
+    broker_order_id:  str | None
+    client_trade_id:  str | None = None
+    broker_quantity:  float | None = None
     filled_quantity: float
     avg_fill_price: float | None
     comment: str | None

@@ -79,6 +79,9 @@ class OandaBroker(BrokerBase):
                 offset = -offset
             qty = max(1, qty + offset)
 
+        # Store the actual broker-side quantity for audit trail
+        order.broker_quantity = float(qty)
+
         units = str(qty)
         if order.action == OrderAction.SELL:
             units = f"-{units}"

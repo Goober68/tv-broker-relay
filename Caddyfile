@@ -6,7 +6,7 @@
 #   - Domain DNS A record must point to this server's IP
 #   - Ports 80 and 443 must be open in your firewall/security group
 
-relay.sweeny.ca {
+tvbrokerrelay.com {
     # Reverse proxy all requests to the FastAPI app
     reverse_proxy app:8000
 
@@ -41,6 +41,6 @@ relay.sweeny.ca {
 }
 
 # Redirect www → apex (optional)
-# www.relay.sweeny.ca {
-#     redir https://relay.sweeny.ca{uri} permanent
+# www.yourdomain.com {
+#     redir https://yourdomain.com{uri} permanent
 # }

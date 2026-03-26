@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json ./
-RUN npm install --frozen-lockfile
+RUN npm install --frozen-lockfile && chmod -R +x node_modules/.bin
 COPY frontend/ ./
 # RUN npm run build
 RUN node node_modules/vite/bin/vite.js build --outDir /frontend/dist
