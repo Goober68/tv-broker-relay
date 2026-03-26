@@ -173,7 +173,8 @@ class DeliveryOut(BaseModel):
 @router.get("/webhook-deliveries", response_model=list[DeliveryOut])
 async def list_webhook_deliveries(
     outcome: str | None = Query(None),
-    limit: int = Query(50, le=500),
+    limit: int = Query(25, le=500),
+    offset: int = Query(0, ge=0),
     tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
@@ -184,6 +185,7 @@ async def list_webhook_deliveries(
         .where(WebhookDelivery.tenant_id == tenant.id)
         .order_by(desc(WebhookDelivery.created_at))
         .limit(limit)
+        .offset(offset)
     )
     if outcome:
         stmt = stmt.where(WebhookDelivery.outcome == outcome)

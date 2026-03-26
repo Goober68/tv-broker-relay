@@ -6,9 +6,13 @@ import { PageSpinner, SectionHeader, StatusBadge, CopyButton, Alert, EmptyState 
 
 export default function WebhookSetupPage() {
   const { user } = useAuth()
+  const [page, setPage] = useState(0)
+  const PAGE_SIZE = 25
+
   const { data: keys, loading: keysLoading } = useApi(() => apiKeysApi.list())
   const { data: deliveries, loading: dlLoading, refetch } = useApi(
-    () => ordersApi.deliveries({ limit: 50 })
+    () => ordersApi.deliveries({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+    [page]
   )
 
   const activeKey = keys?.find(k => k.is_active)
@@ -109,8 +113,28 @@ export default function WebhookSetupPage() {
         <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
           <h2 className="font-display font-semibold text-base-100">Recent deliveries</h2>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-base-500">Click a row to inspect payload</span>
-            <button onClick={refetch} className="text-xs text-base-400 hover:text-base-200">↻ Refresh</button>
+            <span className="text-xs text-base-500">Click a row to inspect</span>
+            {/* Paging controls */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="text-xs text-base-400 hover:text-base-200 disabled:opacity-30 disabled:cursor-not-allowed px-1.5 py-0.5 rounded hover:bg-base-700"
+              >
+                ‹
+              </button>
+              <span className="text-xs text-base-500 font-mono px-1">
+                {page + 1}
+              </span>
+              <button
+                onClick={() => setPage(p => p + 1)}
+                disabled={!deliveries || deliveries.length < PAGE_SIZE}
+                className="text-xs text-base-400 hover:text-base-200 disabled:opacity-30 disabled:cursor-not-allowed px-1.5 py-0.5 rounded hover:bg-base-700"
+              >
+                ›
+              </button>
+            </div>
+            <button onClick={() => { setPage(0); refetch() }} className="text-xs text-base-400 hover:text-base-200">↻</button>
           </div>
         </div>
         {dlLoading ? (
