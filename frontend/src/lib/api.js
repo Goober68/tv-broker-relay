@@ -164,7 +164,7 @@ export const orders = {
 }
 
 export const pnl = {
-  summary: (period = 'daily') => apiFetch(`/api/pnl/summary?period=${period}`),
+  summary: (period = 'daily') => api.get(`/api/pnl/summary?period=${period}`),
 }
 
 export const positions = {
