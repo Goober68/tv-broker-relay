@@ -218,6 +218,9 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
             <InstrumentMap accountId={account.id} />
           )}
 
+          {/* Auto-close settings */}
+          <AutoCloseSettings account={account} onRefresh={onRefresh} />
+
           {/* Delete */}
           <div className="pt-2">
             {confirmDel ? (
@@ -235,6 +238,72 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function AutoCloseSettings({ account, onRefresh }) {
+  const [enabled, setEnabled]   = useState(account.auto_close_enabled || false)
+  const [time, setTime]         = useState(account.auto_close_time || '16:50')
+  const [saving, setSaving]     = useState(false)
+  const [saved, setSaved]       = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await brokersApi.updateAutoClose(account.id, { auto_close_enabled: enabled, auto_close_time: time })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onRefresh()
+    } catch {}
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="border-t border-base-800 pt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-xs font-medium text-base-300">Auto-close (prop firm compliance)</p>
+          <p className="text-xs text-base-500 mt-0.5">
+            Automatically close all open positions at a set time (ET) before session roll
+          </p>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <span className="text-xs text-base-400">{enabled ? 'Enabled' : 'Disabled'}</span>
+          <div
+            onClick={() => setEnabled(v => !v)}
+            className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer ${enabled ? 'bg-accent' : 'bg-base-600'}`}
+          >
+            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${enabled ? 'left-4' : 'left-0.5'}`} />
+          </div>
+        </label>
+      </div>
+
+      {enabled && (
+        <div className="flex items-center gap-3 animate-fade-in">
+          <div>
+            <label className="block text-xs text-base-400 mb-1">Close time (ET)</label>
+            <input
+              type="time"
+              className="input py-1 text-xs font-mono w-32"
+              value={time}
+              onChange={e => setTime(e.target.value)}
+            />
+          </div>
+          <div className="text-xs text-base-500 pt-4">
+            e.g. <span className="font-mono text-base-300">16:50</span> = 4:50 PM ET<br/>
+            (10 min before 5 PM session roll)
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="btn-primary text-xs py-1.5 px-3 mt-3"
+      >
+        {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save auto-close settings'}
+      </button>
     </div>
   )
 }

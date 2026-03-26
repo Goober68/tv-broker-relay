@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     # ── Credential Encryption ─────────────────────────────────────────────────
     credential_encryption_key: str = "change-me-generate-a-real-fernet-key-=="
 
-
     # ── Stripe ────────────────────────────────────────────────────────────────
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
@@ -29,6 +28,7 @@ class Settings(BaseSettings):
     duplicate_window_seconds: int = 10
 
     # ── Background Tasks ──────────────────────────────────────────────────────
+    postgres_password: str = "relay"             # consumed by docker-compose; must be present to avoid pydantic extra-fields error
     fill_poll_interval_seconds: int = 30       # how often to check open order status
     pnl_poll_interval_seconds: int = 60        # how often to poll live P&L from brokers
     reconcile_interval_seconds: int = 60       # how often to sync positions vs broker

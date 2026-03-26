@@ -426,6 +426,140 @@ async def _purge_old_deliveries_once():
         await db.commit()
 
 
+# ── Auto-Close Task ───────────────────────────────────────────────────────────
+
+async def _auto_close_once():
+    """
+    Check all broker accounts with auto_close_enabled=True.
+    If the current ET time matches the account's auto_close_time (within a 1-minute
+    window), close all open positions for that account and log to webhook_deliveries.
+
+    Runs every 60 seconds. Uses a 2-minute guard to prevent double-firing.
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import timezone as _tz
+    from app.models.broker_account import BrokerAccount
+    from app.models.webhook_delivery import WebhookDelivery
+    from app.models.order import Order, OrderAction, OrderType, TimeInForce
+
+    ET = ZoneInfo("America/New_York")
+    now_et  = datetime.now(ET)
+    now_hhmm = now_et.strftime("%H:%M")
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(BrokerAccount).where(
+                BrokerAccount.auto_close_enabled == True,  # noqa: E712
+                BrokerAccount.auto_close_time.isnot(None),
+                BrokerAccount.is_active == True,  # noqa: E712
+            )
+        )
+        accounts = result.scalars().all()
+
+        for acct in accounts:
+            if acct.auto_close_time != now_hhmm:
+                continue
+
+            # Guard: don't fire twice in the same minute
+            two_min_ago = datetime.now(_tz.utc) - timedelta(seconds=120)
+            guard = await db.execute(
+                select(WebhookDelivery).where(
+                    WebhookDelivery.tenant_id  == acct.tenant_id,
+                    WebhookDelivery.outcome.in_(["auto_close", "auto_close_partial"]),
+                    WebhookDelivery.created_at >= two_min_ago,
+                    WebhookDelivery.error_detail.like(f"%{acct.account_alias}%"),
+                )
+            )
+            if guard.scalar_one_or_none() is not None:
+                continue
+
+            logger.info(
+                f"AUTO-CLOSE: firing for tenant={acct.tenant_id} "
+                f"{acct.broker}/{acct.account_alias} at {now_hhmm} ET"
+            )
+
+            # Load non-flat positions for this account
+            pos_result = await db.execute(
+                select(Position).where(
+                    Position.tenant_id == acct.tenant_id,
+                    Position.broker    == acct.broker,
+                    Position.account   == acct.account_alias,
+                    func.abs(Position.quantity) > 1e-9,
+                )
+            )
+            positions = pos_result.scalars().all()
+
+            if not positions:
+                db.add(WebhookDelivery(
+                    tenant_id   = acct.tenant_id,
+                    source_ip   = "relay-auto-close",
+                    outcome     = "auto_close",
+                    http_status = 200,
+                    auth_passed = True,
+                    error_detail= f"{acct.broker}/{acct.account_alias} at {now_hhmm} ET: no open positions",
+                    duration_ms = 0,
+                ))
+                await db.commit()
+                continue
+
+            try:
+                broker = await get_broker_for_tenant(
+                    acct.broker, acct.account_alias, acct.tenant_id, db
+                )
+            except Exception as e:
+                logger.error(f"AUTO-CLOSE: failed to load broker for {acct.account_alias}: {e}")
+                continue
+
+            closed = []
+            errors = []
+
+            for pos in positions:
+                try:
+                    close_order = Order(
+                        tenant_id       = acct.tenant_id,
+                        broker          = acct.broker,
+                        account         = acct.account_alias,
+                        symbol          = pos.symbol,
+                        instrument_type = pos.instrument_type,
+                        action          = OrderAction.CLOSE,
+                        order_type      = OrderType.MARKET,
+                        quantity        = abs(pos.quantity),
+                        time_in_force   = TimeInForce.FOK,
+                        multiplier      = pos.multiplier,
+                        status          = "pending",
+                    )
+                    result = await broker.submit_order(close_order)
+                    if result.success:
+                        pos.quantity       = 0.0
+                        pos.unrealized_pnl = None
+                        pos.last_price     = None
+                        closed.append(pos.symbol)
+                        logger.info(f"AUTO-CLOSE: closed {pos.symbol} for {acct.broker}/{acct.account_alias}")
+                    else:
+                        errors.append(f"{pos.symbol}: {result.error_message}")
+                        logger.error(f"AUTO-CLOSE: failed {pos.symbol}: {result.error_message}")
+                except Exception as e:
+                    errors.append(f"{pos.symbol}: {e}")
+                    logger.exception(f"AUTO-CLOSE: exception closing {pos.symbol}")
+
+            summary = (
+                f"{acct.broker}/{acct.account_alias} at {now_hhmm} ET — "
+                f"closed: {', '.join(closed) or 'none'}. "
+                f"errors: {'; '.join(errors) or 'none'}"
+            )
+            db.add(WebhookDelivery(
+                tenant_id   = acct.tenant_id,
+                source_ip   = "relay-auto-close",
+                outcome     = "auto_close" if not errors else "auto_close_partial",
+                http_status = 200 if not errors else 500,
+                auth_passed = True,
+                error_detail= summary,
+                duration_ms = 0,
+            ))
+            await db.commit()
+            logger.info(f"AUTO-CLOSE complete: {summary}")
+
+
 # ── Task Launcher ──────────────────────────────────────────────────────────────
 
 def start_background_tasks() -> list[asyncio.Task]:
@@ -460,6 +594,11 @@ def start_background_tasks() -> list[asyncio.Task]:
             # Purge old delivery logs once per hour
             _run_forever("delivery_purge", 3600, _purge_old_deliveries_once),
             name="delivery_purge",
+        ),
+        asyncio.create_task(
+            # Auto-close: check every 60s whether any account needs session-end close
+            _run_forever("auto_close", 60, _auto_close_once),
+            name="auto_close",
         ),
     ]
     return tasks

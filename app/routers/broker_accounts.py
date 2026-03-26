@@ -29,6 +29,8 @@ class CreateBrokerAccountRequest(BaseModel):
     broker: BrokerLiteral
     account_alias: str = "primary"
     display_name: str | None = None
+    auto_close_enabled: bool = False
+    auto_close_time: str | None = None  # "HH:MM" ET, e.g. "16:50" for 4:50 PM
     credentials: dict  # validated against BROKER_CREDENTIAL_FIELDS in the service
 
     @field_validator("account_alias")
@@ -64,6 +66,8 @@ class BrokerAccountOut(BaseModel):
     account_alias: str
     display_name: str | None
     is_active: bool
+    auto_close_enabled: bool = False
+    auto_close_time: str | None = None
     created_at: datetime
     updated_at: datetime
     # Redacted credential summary — never returns raw secrets
@@ -281,3 +285,48 @@ async def remove_instrument(
     del instrument_map[symbol]
     account.instrument_map = instrument_map
     await db.commit()
+
+
+class AutoCloseUpdate(BaseModel):
+    auto_close_enabled: bool
+    auto_close_time: str | None = None  # "HH:MM" in ET
+
+
+@router.patch("/broker-accounts/{account_id}/auto-close", status_code=200)
+async def update_auto_close(
+    account_id: int,
+    body: AutoCloseUpdate,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update auto-close settings for a broker account."""
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.id        == account_id,
+            BrokerAccount.tenant_id == tenant.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+
+    # Validate time format if provided
+    if body.auto_close_time:
+        try:
+            h, m = body.auto_close_time.split(":")
+            assert 0 <= int(h) <= 23 and 0 <= int(m) <= 59
+        except Exception:
+            raise HTTPException(
+                status_code=422,
+                detail="auto_close_time must be in HH:MM format (e.g. '16:50')"
+            )
+
+    account.auto_close_enabled = body.auto_close_enabled
+    account.auto_close_time    = body.auto_close_time if body.auto_close_enabled else None
+    await db.commit()
+
+    return {
+        "id":                   account.id,
+        "auto_close_enabled":   account.auto_close_enabled,
+        "auto_close_time":      account.auto_close_time,
+    }

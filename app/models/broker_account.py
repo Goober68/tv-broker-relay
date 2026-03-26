@@ -69,6 +69,11 @@ class BrokerAccount(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Auto-close configuration — for prop firm session-end compliance
+    # auto_close_time: "HH:MM" in ET (e.g. "16:50" = 4:50 PM ET = 10 min before 5 PM roll)
+    auto_close_enabled: Mapped[bool]        = mapped_column(Boolean, default=False)
+    auto_close_time:    Mapped[str | None]  = mapped_column(String(5), nullable=True)  # "HH:MM" ET
+
     tenant: Mapped["Tenant"] = relationship(back_populates="broker_accounts")  # type: ignore
 
     def get_instrument(self, symbol: str) -> dict | None:
