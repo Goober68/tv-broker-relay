@@ -49,9 +49,13 @@ async def get_broker_for_tenant(
         logger.error(f"Failed to decrypt credentials for BrokerAccount {broker_account.id}: {e}")
         raise ValueError("Broker credentials could not be decrypted") from e
 
-    # Merge instrument_map into creds so from_credentials picks it up
+    # Merge instrument_map and account-level settings into creds
     if broker_account.instrument_map:
         creds["instrument_map"] = broker_account.instrument_map
+
+    # Pass FIFO randomization settings through to the adapter
+    creds["fifo_randomize"]  = broker_account.fifo_randomize
+    creds["fifo_max_offset"] = broker_account.fifo_max_offset
 
     match broker_name:
         case "oanda":

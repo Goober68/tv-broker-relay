@@ -218,6 +218,11 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
             <InstrumentMap accountId={account.id} />
           )}
 
+          {/* FIFO randomization — Oanda US only */}
+          {account.broker === 'oanda' && (
+            <FifoSettings account={account} onRefresh={onRefresh} />
+          )}
+
           {/* Auto-close settings */}
           <AutoCloseSettings account={account} onRefresh={onRefresh} />
 
@@ -238,6 +243,78 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function FifoSettings({ account, onRefresh }) {
+  const [enabled, setEnabled]   = useState(account.fifo_randomize || false)
+  const [maxOffset, setMaxOffset] = useState(account.fifo_max_offset || 3)
+  const [saving, setSaving]     = useState(false)
+  const [saved, setSaved]       = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await fetch(`/broker-accounts/${account.id}/fifo`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${(await import('../lib/api')).getAccessToken() || ''}`
+        },
+        body: JSON.stringify({ fifo_randomize: enabled, fifo_max_offset: parseInt(maxOffset) })
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onRefresh()
+    } catch {}
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="border-t border-base-800 pt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-xs font-medium text-base-300">FIFO size randomization</p>
+          <p className="text-xs text-base-500 mt-0.5">
+            Adds a small random offset to each order size so Oanda can identify
+            individual pyramid legs (required for US NFA FIFO compliance)
+          </p>
+        </div>
+        <div
+          onClick={() => setEnabled(v => !v)}
+          className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer flex-shrink-0 ${enabled ? 'bg-accent' : 'bg-base-600'}`}
+        >
+          <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${enabled ? 'left-4' : 'left-0.5'}`} />
+        </div>
+      </div>
+
+      {enabled && (
+        <div className="flex items-center gap-3 animate-fade-in">
+          <div>
+            <label className="block text-xs text-base-400 mb-1">Max offset (units)</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              className="input py-1 text-xs font-mono w-20"
+              value={maxOffset}
+              onChange={e => setMaxOffset(e.target.value)}
+            />
+          </div>
+          <div className="text-xs text-base-500 pt-4">
+            e.g. <span className="font-mono text-base-300">3</span> → order sizes vary by ±1 to ±3 units
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="btn-primary text-xs py-1.5 px-3 mt-3"
+      >
+        {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save FIFO settings'}
+      </button>
     </div>
   )
 }

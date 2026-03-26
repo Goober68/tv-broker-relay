@@ -69,6 +69,12 @@ class BrokerAccount(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # FIFO randomization — for US Oanda accounts subject to NFA FIFO rules
+    # Adds a small random offset to order quantity so each trade has a unique size
+    # allowing individual trades to be identified and closed without FIFO conflicts
+    fifo_randomize:  Mapped[bool]       = mapped_column(Boolean, default=False)
+    fifo_max_offset: Mapped[int]        = mapped_column(Integer, default=3)
+
     # Auto-close configuration — for prop firm session-end compliance
     # auto_close_time: "HH:MM" in ET (e.g. "16:50" = 4:50 PM ET = 10 min before 5 PM roll)
     auto_close_enabled: Mapped[bool]        = mapped_column(Boolean, default=False)

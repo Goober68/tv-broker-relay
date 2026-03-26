@@ -21,10 +21,19 @@ def _fmt_price(symbol: str, price: float) -> str:
 
 class OandaBroker(BrokerBase):
 
-    def __init__(self, api_key: str, account_id: str, base_url: str):
-        self.api_key = api_key
-        self.account_id = account_id
-        self.base_url = base_url.rstrip("/")
+    def __init__(
+        self,
+        api_key: str,
+        account_id: str,
+        base_url: str,
+        fifo_randomize: bool = False,
+        fifo_max_offset: int = 3,
+    ):
+        self.api_key         = api_key
+        self.account_id      = account_id
+        self.base_url        = base_url.rstrip("/")
+        self.fifo_randomize  = fifo_randomize
+        self.fifo_max_offset = fifo_max_offset
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -34,9 +43,11 @@ class OandaBroker(BrokerBase):
     @classmethod
     def from_credentials(cls, creds: dict) -> "OandaBroker":
         return cls(
-            api_key=creds["api_key"],
-            account_id=creds["account_id"],
-            base_url=creds.get("base_url", "https://api-fxtrade.oanda.com/v3"),
+            api_key         = creds["api_key"],
+            account_id      = creds["account_id"],
+            base_url        = creds.get("base_url", "https://api-fxtrade.oanda.com/v3"),
+            fifo_randomize  = creds.get("fifo_randomize", False),
+            fifo_max_offset = int(creds.get("fifo_max_offset", 3)),
         )
 
     @classmethod
@@ -56,7 +67,19 @@ class OandaBroker(BrokerBase):
     def _build_order_body(self, order: Order) -> dict:
         from app.models.order import TimeInForce
 
-        units = str(int(order.quantity))
+        import random
+        qty = int(order.quantity)
+        if self.fifo_randomize and order.action in (OrderAction.BUY, OrderAction.SELL):
+            # Add random offset so each trade has a unique size — required for
+            # FIFO compliance on US Oanda accounts when pyramiding positions.
+            # The relay records the original quantity; only the broker-side size varies.
+            offset = random.randint(1, max(1, self.fifo_max_offset))
+            # Alternate add/subtract based on order ID parity for variety
+            if order.id and order.id % 2 == 0:
+                offset = -offset
+            qty = max(1, qty + offset)
+
+        units = str(qty)
         if order.action == OrderAction.SELL:
             units = f"-{units}"
         elif order.action == OrderAction.CLOSE:

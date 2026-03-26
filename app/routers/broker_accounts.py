@@ -30,7 +30,9 @@ class CreateBrokerAccountRequest(BaseModel):
     account_alias: str = "primary"
     display_name: str | None = None
     auto_close_enabled: bool = False
-    auto_close_time: str | None = None  # "HH:MM" ET, e.g. "16:50" for 4:50 PM
+    auto_close_time: str | None = None
+    fifo_randomize: bool = False
+    fifo_max_offset: int = 3  # "HH:MM" ET, e.g. "16:50" for 4:50 PM
     credentials: dict  # validated against BROKER_CREDENTIAL_FIELDS in the service
 
     @field_validator("account_alias")
@@ -285,6 +287,38 @@ async def remove_instrument(
     del instrument_map[symbol]
     account.instrument_map = instrument_map
     await db.commit()
+
+
+class FifoUpdate(BaseModel):
+    fifo_randomize: bool
+    fifo_max_offset: int = 3
+
+
+@router.patch("/broker-accounts/{account_id}/fifo", status_code=200)
+async def update_fifo(
+    account_id: int,
+    body: FifoUpdate,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update FIFO randomization settings for a broker account."""
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.id        == account_id,
+            BrokerAccount.tenant_id == tenant.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+    account.fifo_randomize  = body.fifo_randomize
+    account.fifo_max_offset = max(1, min(body.fifo_max_offset, 10))  # clamp 1-10
+    await db.commit()
+    return {
+        "id":              account.id,
+        "fifo_randomize":  account.fifo_randomize,
+        "fifo_max_offset": account.fifo_max_offset,
+    }
 
 
 class AutoCloseUpdate(BaseModel):
