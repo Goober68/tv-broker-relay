@@ -103,10 +103,49 @@ def _is_offset(value: float, entry_price: float | None, instrument_type: str) ->
         # Offsets are typically 1-200 ticks; absolute prices are 1000s+ for NQ/ES
         return value < 500 and ratio > 5
     elif instrument_type == "forex":
-        # Forex pip offsets are whole numbers (e.g. 50 pips).
-        # Absolute forex prices are small decimals (e.g. 1.08000).
-        # Rule: if value >= 1.0, treat as pip offset; if value < 1.0, treat as absolute price.
-        return value >= 1.0
+        # Pip offsets are always whole numbers (e.g. 50, 100, 200 pips).
+        # Absolute prices always have decimal component (e.g. 1.08500, 149.750).
+        #
+        # Rule: if value is a whole number → pip offset.
+        #       if value has a decimal component → absolute price.
+        #
+        # This correctly handles:
+        #   EUR_USD: 50 → offset (50 pips), 1.08500 → absolute
+        #   USD_JPY: 50 → offset (50 pips), 149.750 → absolute
+        #   USD_JPY: 150 → ambiguous whole number near price → use ratio check
+        #
+        # Edge case: a whole number very close to the entry price is absolute.
+        # e.g. USD_JPY entry=149.0, value=149 → absolute (ratio ≈ 1.0)
+        #      USD_JPY entry=149.0, value=50  → offset  (ratio ≈ 3.0, value << price)
+        is_whole = (value == int(value))
+        if not is_whole:
+            return False  # has decimals → definitely absolute price
+
+        # Whole number disambiguation:
+        # - Pip offsets are typically 5-500 (small integers)
+        # - Absolute forex prices:
+        #     Major pairs (EUR, GBP, AUD...): 0.5 – 2.5  → always have decimals → caught above
+        #     JPY pairs (USD_JPY, EUR_JPY...): 100 – 170 → whole numbers possible
+        #     CHF pairs: 0.8 – 1.2 → always have decimals → caught above
+        #
+        # Key insight: for JPY pairs, the entry price is ~100-170.
+        # A pip offset of 50 means value/entry ≈ 0.33 (much less than price).
+        # An absolute JPY price of 149 means value/entry ≈ 1.0 (close to price).
+        #
+        # Rule: if value is within 20% of entry_price → absolute price.
+        #       if value is less than 10% of entry_price → pip offset.
+        #       between 10-20% → treat as absolute (conservative).
+        if entry_price and entry_price > 0:
+            ratio = value / entry_price
+            # Absolute prices are always within ~15% of the entry price:
+            #   EUR_USD abs 1.075 vs entry 1.08 → ratio = 0.995  (within 15%)
+            #   USD_JPY abs 148.75 vs entry 149.5 → ratio = 0.995 (within 15%)
+            # Pip offsets are always well outside that band:
+            #   EUR_USD 50 pips vs entry 1.08 → ratio = 46  (way outside)
+            #   USD_JPY 50 pips vs entry 149.5 → ratio = 0.33 (outside)
+            # Rule: if 0.85 ≤ ratio ≤ 1.15 → absolute price. Otherwise → pip offset.
+            return not (0.85 <= ratio <= 1.15)
+        return value < 500     # fallback: no entry price
     else:
         # Equity/CFD: offsets usually < 50 points, absolute prices are similar magnitude
         return value < 100 and ratio > 5
