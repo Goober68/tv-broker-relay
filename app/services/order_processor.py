@@ -11,7 +11,7 @@ from app.brokers.registry import get_broker_for_tenant
 from app.services.state import get_or_create_position, apply_fill_to_position
 from app.services.plans import increment_order_count
 from app.services.plan_enforcer import PlanEnforcer
-from offset_converter import convert_sl_tp
+from app.services.offset_converter import convert_sl_tp
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ async def process_webhook(
     )
 
     # Convert SL/TP/trailing from offsets (ticks/pips/points) to absolute prices if needed
-    levels = convert_sl_tp(
+    levels = offset_converter.convert_sl_tp(
         action=payload.action.value,
         instrument_type=payload.instrument_type.value,
         symbol=payload.symbol,
