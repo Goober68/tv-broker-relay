@@ -144,6 +144,24 @@ async def process_webhook(
         or DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
     )
 
+    # Convert SL/TP/trailing from offsets (ticks/pips/points) to absolute prices if needed
+    levels = convert_sl_tp(
+        action=payload.action.value,
+        instrument_type=payload.instrument_type.value,
+        symbol=payload.symbol,
+        entry_price=payload.price,
+        stop_loss=payload.stop_loss,
+        take_profit=payload.take_profit,
+        trailing_distance=payload.trailing_distance,
+    )
+    if levels.stop_loss_was_offset or levels.take_profit_was_offset or levels.trailing_was_offset:
+        logger.info(
+            f"Offset conversion for {payload.symbol}: "
+            f"SL {payload.stop_loss}→{levels.stop_loss} "
+            f"TP {payload.take_profit}→{levels.take_profit} "
+            f"TSL {payload.trailing_distance}→{levels.trailing_distance}"
+        )
+
     order = Order(
         tenant_id=tenant_id,
         broker=payload.broker,
@@ -164,9 +182,9 @@ async def process_webhook(
         option_strike=payload.option_strike,
         option_right=payload.option_right,
         option_multiplier=payload.option_multiplier,
-        stop_loss=payload.stop_loss,
-        take_profit=payload.take_profit,
-        trailing_distance=payload.trailing_distance,
+        stop_loss=levels.stop_loss,
+        take_profit=levels.take_profit,
+        trailing_distance=levels.trailing_distance,
         comment=payload.comment,
         status=OrderStatus.PENDING,
         raw_payload=json.dumps(payload.model_dump(exclude={"secret"}, mode="json")),

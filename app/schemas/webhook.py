@@ -163,16 +163,8 @@ class WebhookPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_sl_tp_side(self) -> "WebhookPayload":
-        if self.order_type != OrderType.MARKET:
-            return self
-        if self.action == OrderAction.BUY:
-            if self.stop_loss is not None and self.take_profit is not None:
-                if self.stop_loss >= self.take_profit:
-                    raise ValueError("For a buy: stop_loss must be below take_profit")
-        elif self.action == OrderAction.SELL:
-            if self.stop_loss is not None and self.take_profit is not None:
-                if self.stop_loss <= self.take_profit:
-                    raise ValueError("For a sell: stop_loss must be above take_profit")
+        # SL/TP may be offsets (ticks/pips) at this point — validation
+        # of direction is deferred to offset_converter after conversion.
         return self
 
 
