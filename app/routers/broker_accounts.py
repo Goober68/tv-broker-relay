@@ -71,6 +71,8 @@ class BrokerAccountOut(BaseModel):
     is_active: bool
     auto_close_enabled: bool = False
     auto_close_time: str | None = None
+    fifo_randomize: bool = False
+    fifo_max_offset: int = 3
     created_at: datetime
     updated_at: datetime
     # Redacted credential summary — never returns raw secrets
@@ -93,6 +95,10 @@ def _to_out(account) -> BrokerAccountOut:
         account_alias=account.account_alias,
         display_name=account.display_name,
         is_active=account.is_active,
+        auto_close_enabled=account.auto_close_enabled,
+        auto_close_time=account.auto_close_time,
+        fifo_randomize=account.fifo_randomize,
+        fifo_max_offset=account.fifo_max_offset,
         created_at=account.created_at,
         updated_at=account.updated_at,
         credential_summary=summary,
