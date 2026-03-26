@@ -6,6 +6,7 @@ import {
   Mono, EmptyState, SectionHeader
 } from '../components/ui'
 import { clsx } from 'clsx'
+import PnlCharts from '../components/PnlCharts'
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -120,6 +121,14 @@ export default function DashboardPage() {
             </div>
           )}
         </section>
+      </div>
+      {/* P&L Charts */}
+      <div className="space-y-4">
+        <SectionHeader
+          title="P&L by Account"
+          description="Realized and unrealized profit/loss per broker account"
+        />
+        <PnlCharts />
       </div>
     </div>
   )

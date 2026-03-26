@@ -161,6 +161,10 @@ export const orders = {
   deliveries: (params = {}) => api.get('/api/webhook-deliveries?' + new URLSearchParams(params)),
 }
 
+export const pnl = {
+  summary: (period = 'daily') => apiFetch(`/api/pnl/summary?period=${period}`),
+}
+
 export const positions = {
   list: (params = {}) => api.get('/api/positions?' + new URLSearchParams(params)),
 }

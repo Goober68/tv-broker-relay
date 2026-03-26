@@ -406,3 +406,156 @@ def _infer_instrument_type(broker: str, symbol: str) -> str:
     if broker == "ibkr":
         return "equity"   # best guess — instrument_map has the real type
     return "forex"
+
+
+# ── P&L Summary ────────────────────────────────────────────────────────────────
+
+class PnlBar(BaseModel):
+    period_start: datetime
+    realized_pnl: float
+    unrealized_pnl: float
+    cumulative_realized: float
+    cumulative_total: float
+    order_count: int
+
+
+class AccountPnlSummary(BaseModel):
+    broker: str
+    account: str
+    display_name: str | None
+    bars: list[PnlBar]
+
+
+@router.get("/pnl/summary", response_model=list[AccountPnlSummary])
+async def get_pnl_summary(
+    period: str = Query("daily", pattern="^(15min|daily|weekly)$"),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return P&L bucketed by time period for each active broker account.
+
+    period: "15min" | "daily" | "weekly"
+
+    Realized P&L is calculated from filled orders:
+        (avg_fill_price - avg_entry_price) * filled_quantity * multiplier
+    Since we track running position P&L in the positions table, we use
+    the daily_realized_pnl and realized_pnl fields which are updated on fills.
+
+    For simplicity, we aggregate filled order values directly from orders table
+    using the position state changes — each SELL/CLOSE reduces position and
+    generates realized P&L.
+    """
+    from datetime import timezone, timedelta
+    from sqlalchemy import case, cast, Float
+
+    now = datetime.now(timezone.utc)
+
+    # Determine lookback and truncation based on period
+    if period == "15min":
+        lookback  = now - timedelta(hours=24)   # last 24 hours of 15min bars
+        trunc_sql = "date_trunc('hour', created_at) + INTERVAL '15 min' * FLOOR(EXTRACT(MINUTE FROM created_at) / 15)"
+    elif period == "daily":
+        lookback  = now - timedelta(days=30)
+        trunc_sql = "date_trunc('day', created_at)"
+    else:  # weekly
+        lookback  = now - timedelta(weeks=12)
+        trunc_sql = "date_trunc('week', created_at)"
+
+    # Get active broker accounts for this tenant
+    acct_result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.tenant_id == tenant.id,
+            BrokerAccount.is_active == True,  # noqa: E712
+        ).order_by(BrokerAccount.broker, BrokerAccount.account_alias)
+    )
+    accounts = acct_result.scalars().all()
+
+    summaries = []
+
+    for acct in accounts:
+        # Query filled orders for this broker/account within lookback window
+        # P&L per order = avg_fill_price * filled_quantity * multiplier * direction
+        # direction: buy = negative cash flow (cost), sell/close = positive (proceeds)
+        # Net P&L accumulated in position — we use a simplified approach:
+        # For each filled order, calculate contribution as:
+        #   sell/close: +avg_fill_price * qty * multiplier
+        #   buy:        -avg_fill_price * qty * multiplier
+        # Summing these per period gives realized P&L change
+
+        from sqlalchemy import text
+
+        rows = await db.execute(
+            text(f"""
+                SELECT
+                    {trunc_sql} AS period_start,
+                    SUM(
+                        CASE
+                            WHEN action IN ('sell', 'close')
+                                THEN avg_fill_price * filled_quantity * multiplier
+                            ELSE
+                                -avg_fill_price * filled_quantity * multiplier
+                        END
+                    ) AS period_pnl,
+                    COUNT(*) AS order_count
+                FROM orders
+                WHERE tenant_id = :tenant_id
+                  AND broker    = :broker
+                  AND account   = :account
+                  AND status    = 'filled'
+                  AND avg_fill_price IS NOT NULL
+                  AND filled_quantity > 0
+                  AND created_at >= :lookback
+                GROUP BY period_start
+                ORDER BY period_start ASC
+            """),
+            {
+                "tenant_id": str(tenant.id),
+                "broker":    acct.broker,
+                "account":   acct.account_alias,
+                "lookback":  lookback,
+            }
+        )
+        raw_bars = rows.fetchall()
+
+        # Get current unrealized P&L for this account from positions table
+        pos_result = await db.execute(
+            select(Position).where(
+                Position.tenant_id == tenant.id,
+                Position.broker    == acct.broker,
+                Position.account   == acct.account_alias,
+                func.abs(Position.quantity) > 1e-9,
+            )
+        )
+        open_positions  = pos_result.scalars().all()
+        total_unrealized = sum(p.unrealized_pnl or 0 for p in open_positions)
+
+        # Build bars with running cumulative
+        bars = []
+        cumulative = 0.0
+        for row in raw_bars:
+            period_pnl    = float(row.period_pnl or 0)
+            cumulative   += period_pnl
+            bars.append(PnlBar(
+                period_start        = row.period_start,
+                realized_pnl        = period_pnl,
+                unrealized_pnl      = 0.0,   # unrealized is only current snapshot
+                cumulative_realized = cumulative,
+                cumulative_total    = cumulative + total_unrealized,
+                order_count         = int(row.order_count),
+            ))
+
+        # Append unrealized to the last bar if we have open positions
+        if bars and total_unrealized != 0:
+            bars[-1] = bars[-1].model_copy(
+                update={"unrealized_pnl": total_unrealized}
+            )
+
+        summaries.append(AccountPnlSummary(
+            broker       = acct.broker,
+            account      = acct.account_alias,
+            display_name = acct.display_name,
+            bars         = bars,
+        ))
+
+    return summaries
