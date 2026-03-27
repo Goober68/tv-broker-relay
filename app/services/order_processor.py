@@ -250,12 +250,41 @@ async def process_webhook(
         or DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
     )
 
+    # Resolve entry price for SL/TP offset conversion.
+    # Always prefer the live stream mid over the payload price — the stream is
+    # real-time whereas {{close}} from PineScript can be a bar behind.
+    # Falls back to payload.price if the stream has no cached price for the symbol,
+    # and falls back further to None for non-Oanda brokers.
+    entry_price = payload.price
+    if (
+        payload.broker == "oanda"
+        and payload.sl_tp_type in ("pips", "ticks", "points")
+        and (payload.stop_loss is not None or payload.take_profit is not None
+             or payload.trailing_distance is not None)
+    ):
+        from app.services.oanda_stream import get_manager
+        manager = get_manager("oanda", payload.account)
+        if manager:
+            cached = manager.get_price(payload.symbol)
+            if cached:
+                entry_price = cached["mid"]
+                logger.info(
+                    f"{payload.symbol}: using stream mid {entry_price:.5f} "
+                    f"as entry price for {payload.sl_tp_type} SL/TP conversion"
+                    + (f" (overriding payload price {payload.price})" if payload.price else "")
+                )
+            elif entry_price is None:
+                logger.warning(
+                    f"{payload.symbol}: no cached price in stream and no price in payload — "
+                    f"sl_tp_type='{payload.sl_tp_type}' values will be treated as absolute."
+                )
+
     # Convert SL/TP/trailing from offsets (ticks/pips/points) to absolute prices if needed
     levels = convert_sl_tp(
         action=payload.action.value,
         instrument_type=payload.instrument_type.value,
         symbol=payload.symbol,
-        entry_price=payload.price,
+        entry_price=entry_price,
         stop_loss=payload.stop_loss,
         take_profit=payload.take_profit,
         trailing_distance=payload.trailing_distance,
