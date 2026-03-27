@@ -4,7 +4,8 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install && chmod -R +x node_modules/.bin
 COPY frontend/ ./
-RUN npm run build
+# RUN npm run build
+RUN node node_modules/vite/bin/vite.js build --outDir /frontend/dist
 # Output lands in /frontend/dist (vite.config.js outDir: 'dist')
 
 # ── Python build stage ─────────────────────────────────────────────────────────
