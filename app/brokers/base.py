@@ -9,6 +9,7 @@ class BrokerOrderResult:
     broker_order_id:  str | None = None
     client_trade_id:   str | None = None  # broker-side trade ID (e.g. Oanda clientTradeID)
     broker_request:    str | None = None  # outbound request body (JSON) for failed orders
+    broker_response:   str | None = None  # broker response body for failed orders
     filled_quantity: float = 0.0
     avg_fill_price: float | None = None
     error_message: str | None = None

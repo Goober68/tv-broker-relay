@@ -152,6 +152,7 @@ class Order(Base):
     comment:       Mapped[str | None] = mapped_column(String(256), nullable=True)
     error_message:  Mapped[str | None] = mapped_column(Text, nullable=True)
     broker_request:  Mapped[str | None] = mapped_column(Text, nullable=True)  # outbound JSON sent to broker on failure
+    broker_response: Mapped[str | None] = mapped_column(Text, nullable=True)  # broker response body on failure
 
     @property
     def is_resting(self) -> bool:

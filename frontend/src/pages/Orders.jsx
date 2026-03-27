@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { orders as ordersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
 import {
@@ -100,59 +100,112 @@ export default function OrdersPage() {
 }
 
 function OrderRow({ order }) {
-  const isBuy  = order.action === 'buy'
+  const [expanded, setExpanded] = useState(false)
+  const isBuy   = order.action === 'buy'
   const isClose = order.action === 'close'
-  const actionColor = isBuy
-    ? 'text-accent'
-    : isClose ? 'text-warn' : 'text-loss'
+  const actionColor = isBuy ? 'text-accent' : isClose ? 'text-warn' : 'text-loss'
+  const hasDetail = order.error_message || order.broker_request || order.broker_response
+
+  const fmtJson = (str) => {
+    try { return JSON.stringify(JSON.parse(str), null, 2) }
+    catch { return str }
+  }
 
   return (
-    <tr>
-      <td>
-        <span className="font-mono text-xs text-base-400">
-          {new Date(order.created_at).toLocaleString([], {
-            month: 'short', day: 'numeric',
-            hour: '2-digit', minute: '2-digit'
-          })}
-        </span>
-      </td>
-      <td>
-        <span className="font-mono font-medium text-base-100">{order.symbol}</span>
-        {order.instrument_type !== 'forex' && (
-          <span className="ml-1 text-[10px] text-base-500">{order.instrument_type}</span>
-        )}
-      </td>
-      <td>
-        <span className={`font-mono font-semibold uppercase text-xs ${actionColor}`}>
-          {order.action}
-        </span>
-      </td>
-      <td><span className="text-base-400 text-xs font-mono">{order.order_type}</span></td>
-      <td><Mono>{order.quantity.toLocaleString()}</Mono></td>
-      <td>
-        {order.broker_quantity != null && order.broker_quantity !== order.quantity ? (
-          <div className="text-right">
-            <Mono className="text-warn">{order.broker_quantity.toLocaleString()}</Mono>
-            <div className="text-[10px] text-base-600 font-mono">randomized</div>
-          </div>
-        ) : (
-          <Mono className="text-base-500">—</Mono>
-        )}
-      </td>
-      <td>
-        <Mono className="text-base-400">
-          {order.price ? order.price.toFixed(5) : '—'}
-        </Mono>
-      </td>
-      <td>
-        <Mono>
-          {order.avg_fill_price ? order.avg_fill_price.toFixed(5) : '—'}
-        </Mono>
-      </td>
-      <td>
-        <span className="text-xs text-base-400">{order.broker}</span>
-      </td>
-      <td><StatusBadge status={order.status} /></td>
-    </tr>
+    <>
+      <tr
+        onClick={() => hasDetail && setExpanded(v => !v)}
+        className={hasDetail ? 'cursor-pointer hover:bg-base-800/50' : ''}
+      >
+        <td>
+          <span className="font-mono text-xs text-base-400">
+            {new Date(order.created_at).toLocaleString([], {
+              month: 'short', day: 'numeric',
+              hour: '2-digit', minute: '2-digit'
+            })}
+          </span>
+        </td>
+        <td>
+          <span className="font-mono font-medium text-base-100">{order.symbol}</span>
+          {order.instrument_type !== 'forex' && (
+            <span className="ml-1 text-[10px] text-base-500">{order.instrument_type}</span>
+          )}
+        </td>
+        <td>
+          <span className={`font-mono font-semibold uppercase text-xs ${actionColor}`}>
+            {order.action}
+          </span>
+        </td>
+        <td><span className="text-base-400 text-xs font-mono">{order.order_type}</span></td>
+        <td><Mono>{order.quantity.toLocaleString()}</Mono></td>
+        <td>
+          {order.broker_quantity != null && order.broker_quantity !== order.quantity ? (
+            <div className="text-right">
+              <Mono className="text-warn">{order.broker_quantity.toLocaleString()}</Mono>
+              <div className="text-[10px] text-base-600 font-mono">randomized</div>
+            </div>
+          ) : (
+            <Mono className="text-base-500">—</Mono>
+          )}
+        </td>
+        <td>
+          <Mono className="text-base-400">
+            {order.price ? order.price.toFixed(5) : '—'}
+          </Mono>
+        </td>
+        <td>
+          <Mono>
+            {order.avg_fill_price ? order.avg_fill_price.toFixed(5) : '—'}
+          </Mono>
+        </td>
+        <td>
+          <span className="text-xs text-base-400">{order.broker}</span>
+        </td>
+        <td><StatusBadge status={order.status} /></td>
+      </tr>
+
+      {expanded && hasDetail && (
+        <tr>
+          <td colSpan={10} className="p-0">
+            <div className="px-4 py-3 bg-base-900 border-t border-base-800 space-y-3">
+              {order.error_message && (
+                <div>
+                  <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-1.5">
+                    Error message
+                  </div>
+                  <pre className="bg-base-950 border border-loss/20 rounded-md p-3 text-xs font-mono text-loss whitespace-pre-wrap">
+                    {order.error_message}
+                  </pre>
+                </div>
+              )}
+              {(order.broker_request || order.broker_response) && (
+                <div className="grid grid-cols-2 gap-3">
+                  {order.broker_request && (
+                    <div>
+                      <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-1.5">
+                        Request sent to broker
+                      </div>
+                      <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 whitespace-pre-wrap overflow-x-auto h-48 overflow-y-auto">
+                        {fmtJson(order.broker_request)}
+                      </pre>
+                    </div>
+                  )}
+                  {order.broker_response && (
+                    <div>
+                      <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-1.5">
+                        Response from broker
+                      </div>
+                      <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 whitespace-pre-wrap overflow-x-auto h-48 overflow-y-auto">
+                        {fmtJson(order.broker_response)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   )
 }

@@ -267,6 +267,7 @@ class TradovateBroker(BrokerBase):
                         success=False,
                         error_message=data["failureReason"],
                         broker_request=_json.dumps(body, default=str),
+                        broker_response=_json.dumps(data, default=str),
                     )
                 order_id = str(data.get("orderId", ""))
                 is_open = order.order_type != OrderType.MARKET
@@ -279,6 +280,7 @@ class TradovateBroker(BrokerBase):
                     success=False,
                     error_message=e.response.text,
                     broker_request=_json.dumps(body, default=str),
+                    broker_response=e.response.text,
                 )
             except Exception as e:
                 logger.exception("Unexpected error submitting to Tradovate")
@@ -302,6 +304,7 @@ class TradovateBroker(BrokerBase):
                         success=False,
                         error_message=data["failureReason"],
                         broker_request=_json.dumps(body, default=str),
+                        broker_response=_json.dumps(data, default=str),
                     )
                 return BrokerOrderResult(success=True, broker_order_id=str(data.get("orderId", "")))
             except Exception as e:

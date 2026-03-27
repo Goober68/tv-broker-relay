@@ -63,6 +63,7 @@ class OrderOut(BaseModel):
     client_trade_id:  str | None = None
     broker_quantity:  float | None = None
     broker_request:  str | None = None
+    broker_response: str | None = None
     filled_quantity: float
     avg_fill_price: float | None
     comment: str | None
