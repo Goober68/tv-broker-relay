@@ -71,9 +71,14 @@ class OandaStreamManager:
         self.api_key    = api_key
         self.account_id = account_id
         # Oanda streaming uses stream-fxtrade.oanda.com not api-fxtrade
-        self.stream_url = base_url.replace("api-fxtrade", "stream-fxtrade").replace(
+        # Strip any path suffix (e.g. /v3) — we add it explicitly in the stream URLs
+        stream_base = base_url.replace("api-fxtrade", "stream-fxtrade").replace(
             "api-fxpractice", "stream-fxpractice"
-        ).rstrip("/")
+        )
+        # Remove /v3 or any path component — stream URLs are built with full paths
+        from urllib.parse import urlparse
+        parsed = urlparse(stream_base)
+        self.stream_url = f"{parsed.scheme}://{parsed.netloc}"
         self.api_url    = base_url.rstrip("/")
 
         self._headers = {
