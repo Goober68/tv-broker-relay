@@ -182,24 +182,32 @@ class TradovateBroker(BrokerBase):
             # converted trail_dist/trail_trigger/trail_update to price differences.
             # take_profit and stop_loss must also be relative here — subtract entry price.
             import json as _json
+            # startOrderStrategy bracket values are signed relative offsets:
+            # positive = profit direction, negative = loss direction
+            # For a buy: TP is positive (+25), SL/trail is negative (-25)
+            # For a sell: TP is negative (-25), SL/trail is positive (+25)
+            is_buy = order.action == OrderAction.BUY
+            sign   =  1 if is_buy else -1  # profit direction
+            loss   = -1 if is_buy else  1  # loss direction
+
+            trail_dist = order.trail_dist * loss  # negative for buy, positive for sell
+
             bracket: dict = {
                 "qty":          int(order.quantity),
                 "trailingStop": True,
-                "stopLoss":     order.trail_dist,
+                "stopLoss":     trail_dist,
             }
             if order.take_profit is not None:
-                # Convert absolute TP back to relative offset for startOrderStrategy
                 if order.price:
-                    bracket["profitTarget"] = order.take_profit - order.price
+                    bracket["profitTarget"] = (order.take_profit - order.price) * sign
                 else:
-                    bracket["profitTarget"] = order.take_profit
+                    bracket["profitTarget"] = order.take_profit * sign
             if order.stop_loss is not None:
-                # Convert absolute SL back to relative offset (always positive distance)
                 if order.price:
-                    bracket["stopLoss"] = abs(order.stop_loss - order.price)
+                    bracket["stopLoss"] = abs(order.stop_loss - order.price) * loss
                 else:
-                    bracket["stopLoss"] = order.stop_loss
-            auto_trail: dict = {"stopLoss": order.trail_dist}
+                    bracket["stopLoss"] = order.stop_loss * loss
+            auto_trail: dict = {"stopLoss": abs(order.trail_dist)}
             if order.trail_trigger is not None:
                 auto_trail["trigger"] = order.trail_trigger
             if order.trail_update is not None:
