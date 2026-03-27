@@ -35,6 +35,7 @@ class TimeInForce(str, enum.Enum):
     GTC = "GTC"
     GTD = "GTD"
     DAY = "DAY"
+    GFD = "GFD"
     IOC = "IOC"
     FOK = "FOK"
 

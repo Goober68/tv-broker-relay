@@ -108,7 +108,7 @@ class OandaBroker(BrokerBase):
 
         if order.order_type == OrderType.MARKET:
             body["order"]["type"] = "MARKET"
-            body["order"]["timeInForce"] = tif if tif in (TimeInForce.FOK, TimeInForce.IOC) else TimeInForce.FOK
+            body["order"]["timeInForce"] = tif if tif in (TimeInForce.FOK, TimeInForce.IOC, TimeInForce.GFD) else TimeInForce.GFD
         elif order.order_type == OrderType.LIMIT:
             body["order"]["type"] = "LIMIT"
             body["order"]["price"] = _fmt_price(order.symbol, order.price)
@@ -122,11 +122,10 @@ class OandaBroker(BrokerBase):
             if tif == TimeInForce.GTD and order.expire_at:
                 body["order"]["gtdTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
 
-        if order.trailing_distance is not None:
-            body["order"]["trailingStopLossOnFill"] = {
-                "distance": _fmt_price(order.symbol, order.trailing_distance), "timeInForce": "GTC"
-            }
-        elif order.stop_loss is not None:
+        # trailing_distance is intentionally NOT sent to Oanda at order time.
+        # The stream manager places the native trailing stop only when the
+        # trail_trigger price is hit (via TrailTrigger row + _place_trailing_stop).
+        if order.stop_loss is not None:
             body["order"]["stopLossOnFill"] = {
                 "price": _fmt_price(order.symbol, order.stop_loss),
                 "timeInForce": "GTC",
