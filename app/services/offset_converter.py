@@ -90,7 +90,7 @@ def _is_offset(value: float, entry_price: float | None, instrument_type: str) ->
     """
     if entry_price is None:
         # No entry price — assume offset if small enough
-        if instrument_type == "futures":
+        if instrument_type == "future":
             return value < 500
         elif instrument_type == "forex":
             return value < 1000
@@ -193,10 +193,26 @@ def convert_sl_tp(
     """
     is_buy = action.lower() == "buy"
 
+    # Auto-remap mismatched sl_tp_type for the instrument:
+    #   futures must use ticks (not pips), forex must use pips (not ticks)
+    remapped_sl_tp_type = sl_tp_type
+    if sl_tp_type == "pips" and instrument_type == "future":
+        logger.warning(
+            f"{symbol}: sl_tp_type='pips' is invalid for futures — "
+            f"auto-remapping to 'ticks'"
+        )
+        remapped_sl_tp_type = "ticks"
+    elif sl_tp_type == "ticks" and instrument_type == "forex":
+        logger.warning(
+            f"{symbol}: sl_tp_type='ticks' is invalid for forex — "
+            f"auto-remapping to 'pips'"
+        )
+        remapped_sl_tp_type = "pips"
+
     def to_absolute(value: float, field: str) -> tuple[float, bool]:
         """Convert a single value. Returns (absolute_price, was_offset)."""
         # Explicit type overrides heuristic
-        effective_type = sl_tp_type
+        effective_type = remapped_sl_tp_type
         if effective_type == "absolute":
             return value, False
         if effective_type is None:
@@ -276,11 +292,11 @@ def convert_sl_tp(
     # the result is simply: value * tick_size (for ticks) or value * pip_size (for pips)
     def to_distance(value: float) -> float:
         """Convert an offset value to a raw price distance (always positive)."""
-        if sl_tp_type == "absolute" or sl_tp_type is None:
+        if remapped_sl_tp_type == "absolute" or remapped_sl_tp_type is None:
             return value
-        if sl_tp_type == "ticks":
+        if remapped_sl_tp_type == "ticks":
             return value * _tick_size(symbol)
-        if sl_tp_type == "pips":
+        if remapped_sl_tp_type == "pips":
             return value * _pip_size(symbol)
         return value  # points — already a price distance
 

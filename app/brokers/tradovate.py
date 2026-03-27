@@ -198,14 +198,30 @@ class TradovateBroker(BrokerBase):
                 "stopLoss":     trail_dist,
             }
             if order.take_profit is not None:
-                if order.price:
-                    bracket["profitTarget"] = (order.take_profit - order.price) * sign
+                # startOrderStrategy bracket values are RELATIVE offsets from entry.
+                # order.take_profit is already an absolute price (post offset_converter).
+                # We must subtract the entry price to get the relative offset.
+                ref_price = order.price or order.avg_fill_price
+                if ref_price:
+                    bracket["profitTarget"] = abs(order.take_profit - ref_price)
                 else:
-                    bracket["profitTarget"] = order.take_profit * sign
+                    # Market order with no reference price — log warning.
+                    # take_profit is absolute; best we can do is use it as-is and
+                    # hope the caller provided a sensible value.
+                    logger.warning(
+                        f"{order.symbol}: no reference price for market order — "
+                        f"cannot compute relative profitTarget from absolute {order.take_profit}"
+                    )
+                    bracket["profitTarget"] = order.take_profit
             if order.stop_loss is not None:
-                if order.price:
-                    bracket["stopLoss"] = abs(order.stop_loss - order.price) * loss
+                ref_price = order.price or order.avg_fill_price
+                if ref_price:
+                    bracket["stopLoss"] = abs(order.stop_loss - ref_price) * loss
                 else:
+                    logger.warning(
+                        f"{order.symbol}: no reference price for market order — "
+                        f"cannot compute relative stopLoss from absolute {order.stop_loss}"
+                    )
                     bracket["stopLoss"] = order.stop_loss * loss
             auto_trail: dict = {"stopLoss": abs(order.trail_dist)}
             if order.trail_trigger is not None:

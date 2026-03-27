@@ -8,17 +8,19 @@ import { PageSpinner, SectionHeader, StatusBadge, CopyButton, Alert, EmptyState 
 export default function WebhookSetupPage() {
   const { user } = useAuth()
   const [page, setPage] = useState(0)
+  const [inspecting, setInspecting] = useState(null) // delivery id being inspected
   const PAGE_SIZE = 25
 
   const { data: keys, loading: keysLoading } = useApi(() => apiKeysApi.list())
   const { data: deliveries, loading: dlLoading, refetch } = usePolling(
     () => ordersApi.deliveries({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
     30_000,  // fallback poll every 30s — SSE handles instant updates
-    [page]
+    [page],
+    { paused: inspecting != null }
   )
 
-  // SSE: refetch deliveries list instantly when a new webhook arrives
-  useEventSource('/api/events', 'delivery', () => { if (page === 0) refetch() })
+  // SSE: refetch deliveries list instantly when a new webhook arrives (unless inspecting)
+  useEventSource('/api/events', 'delivery', () => { if (page === 0 && inspecting == null) refetch() })
 
   const activeKey = keys?.find(k => k.is_active)
   const tenantId  = user?.id
@@ -118,7 +120,7 @@ export default function WebhookSetupPage() {
           <EmptyState icon="📡" title="No deliveries yet" description="Fire a test alert from TradingView to see it here." />
         ) : (
           <div className="divide-y divide-base-800">
-            {deliveries.map(d => <DeliveryRow key={d.id} delivery={d} />)}
+            {deliveries.map(d => <DeliveryRow key={d.id} delivery={d} inspecting={inspecting} setInspecting={setInspecting} />)}
           </div>
         )}
       </section>
@@ -126,8 +128,9 @@ export default function WebhookSetupPage() {
   )
 }
 
-function DeliveryRow({ delivery: d }) {
-  const [expanded, setExpanded] = useState(false)
+function DeliveryRow({ delivery: d, inspecting, setInspecting }) {
+  const expanded = inspecting === d.id
+  const toggleExpanded = () => setInspecting(expanded ? null : d.id)
 
   const fmtJson = (str) => {
     try {
@@ -161,7 +164,7 @@ function DeliveryRow({ delivery: d }) {
       {/* Summary row */}
       <div
         className="px-5 py-3 flex items-center gap-4 cursor-pointer hover:bg-base-800/40 transition-colors select-none"
-        onClick={() => setExpanded(v => !v)}
+        onClick={toggleExpanded}
       >
         <span className="text-base-600 text-xs font-mono w-3 flex-shrink-0">
           {expanded ? '▼' : '▶'}

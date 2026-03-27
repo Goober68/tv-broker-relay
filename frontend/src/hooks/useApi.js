@@ -31,12 +31,15 @@ export function useApi(fetcher, deps = []) {
 
 /**
  * Polling hook — refetches at `interval` ms while mounted.
+ * Pass { paused: true } in options to temporarily stop polling.
  */
-export function usePolling(fetcher, interval = 30_000, deps = []) {
+export function usePolling(fetcher, interval = 30_000, deps = [], options = {}) {
   const result = useApi(fetcher, deps)
+  const paused = options.paused ?? false
   useEffect(() => {
+    if (paused) return
     const id = setInterval(result.refetch, interval)
     return () => clearInterval(id)
-  }, [interval, result.refetch])
+  }, [interval, result.refetch, paused])
   return result
 }
