@@ -321,7 +321,12 @@ class OandaStreamManager:
             await self._check_trail_triggers(symbol, bid, ask, mid)
 
     async def _update_position_pnl(self, symbol: str, mid: float):
-        """Update last_price and unrealized_pnl for open positions."""
+        """Update last_price for open positions from the price stream.
+        
+        P&L (unrealized_pnl) is intentionally NOT calculated here — forex P&L 
+        requires account currency conversion which Oanda already handles correctly
+        via the P&L poll. We only update last_price as a real-time price reference.
+        """
         from app.models.db import AsyncSessionLocal
         from app.models.position import Position
         from sqlalchemy import select, func
@@ -342,14 +347,6 @@ class OandaStreamManager:
             for pos in positions:
                 pos.last_price    = mid
                 pos.last_price_at = datetime.now(timezone.utc)
-                if pos.avg_price and pos.quantity and pos.multiplier:
-                    direction = 1 if pos.quantity > 0 else -1
-                    pos.unrealized_pnl = (
-                        (mid - pos.avg_price)
-                        * abs(pos.quantity)
-                        * pos.multiplier
-                        * direction
-                    )
             await db.commit()
 
     async def _check_trail_triggers(
