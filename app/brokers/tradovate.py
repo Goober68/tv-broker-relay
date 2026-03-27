@@ -275,6 +275,7 @@ class TradovateBroker(BrokerBase):
                 return BrokerOrderResult(
                     success=True, broker_order_id=order_id, order_open=is_open,
                     broker_request=body_str,
+                    broker_response=resp.text,
                 )
             except httpx.HTTPStatusError as e:
                 logger.error(f"Tradovate order error {e.response.status_code}: {e.response.text}")
@@ -309,7 +310,8 @@ class TradovateBroker(BrokerBase):
                         broker_response=_json.dumps(data, default=str),
                     )
                 return BrokerOrderResult(success=True, broker_order_id=str(data.get("orderId", "")),
-                                         broker_request=_json.dumps(body, default=str))
+                                         broker_request=_json.dumps(body, default=str),
+                                         broker_response=resp.text)
             except Exception as e:
                 return BrokerOrderResult(success=False, error_message=str(e))
 

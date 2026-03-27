@@ -130,11 +130,13 @@ function DeliveryRow({ delivery: d }) {
   }
 
   // raw_payload = what TradingView actually sent (secret already stripped by relay)
-  const inboundJson  = d.raw_payload  ? fmtJson(d.raw_payload)  : null
-  // broker_request = outbound JSON the relay built and sent to Oanda
+  const inboundJson  = d.raw_payload    ? fmtJson(d.raw_payload)    : null
+  // broker_request = outbound JSON the relay built and sent to the broker
   const outboundJson = d.broker_request ? fmtJson(d.broker_request) : null
+  // broker_response = raw response body received back from the broker
+  const responseJson = d.broker_response ? fmtJson(d.broker_response) : null
 
-  const hasDetail = inboundJson || outboundJson || d.error_detail
+  const hasDetail = inboundJson || outboundJson || responseJson || d.error_detail
 
   return (
     <div>
@@ -193,10 +195,10 @@ function DeliveryRow({ delivery: d }) {
             </div>
           )}
 
-          {/* Side-by-side JSON panels */}
-          {(inboundJson || outboundJson) && (
-            <div className="grid grid-cols-2 gap-3">
-              {/* Left: what TradingView sent */}
+          {/* Three-panel JSON view */}
+          {(inboundJson || outboundJson || responseJson) && (
+            <div className="grid grid-cols-3 gap-3">
+              {/* Panel 1: what TradingView sent */}
               <div className="min-w-0">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider">
@@ -215,7 +217,7 @@ function DeliveryRow({ delivery: d }) {
                 )}
               </div>
 
-              {/* Right: what the relay sent to Oanda */}
+              {/* Panel 2: what the relay sent to the broker */}
               <div className="min-w-0">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider">
@@ -232,6 +234,25 @@ function DeliveryRow({ delivery: d }) {
                     <span className="text-xs text-base-600 italic">
                       {d.auth_passed ? 'No broker request recorded' : 'Auth failed — no order created'}
                     </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Panel 3: what the broker responded */}
+              <div className="min-w-0">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider">
+                    ← Response from broker
+                  </div>
+                  {responseJson && <CopyButton value={responseJson} label="Copy" />}
+                </div>
+                {responseJson ? (
+                  <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto overflow-y-auto whitespace-pre h-64">
+                    {responseJson}
+                  </pre>
+                ) : (
+                  <div className="bg-base-950 border border-base-800 rounded-md p-3 h-64 flex items-center justify-center">
+                    <span className="text-xs text-base-600 italic">No response recorded</span>
                   </div>
                 )}
               </div>

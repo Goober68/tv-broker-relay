@@ -187,6 +187,7 @@ class IBKRBroker(BrokerBase):
                             broker_order_id=str(item["order_id"]),
                             order_open=order.order_type != OrderType.MARKET,
                             broker_request=body_str,
+                            broker_response=resp.text,
                         )
                     if "messageIds" in item:
                         confirmed = await self._confirm_order(client, item["id"])
@@ -196,6 +197,7 @@ class IBKRBroker(BrokerBase):
                                 broker_order_id=str(item["id"]),
                                 order_open=order.order_type != OrderType.MARKET,
                                 broker_request=body_str,
+                                broker_response=resp.text,
                             )
                         return BrokerOrderResult(
                             success=False, error_message="IBKR order confirmation failed"

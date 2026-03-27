@@ -112,6 +112,7 @@ class AlpacaBroker(BrokerBase):
                         filled_quantity=filled,
                         avg_fill_price=avg,
                         broker_request=body_str,
+                        broker_response=resp.text,
                     )
 
                 return BrokerOrderResult(
@@ -119,6 +120,7 @@ class AlpacaBroker(BrokerBase):
                     broker_order_id=order_id,
                     order_open=is_open,
                     broker_request=body_str,
+                    broker_response=resp.text,
                 )
 
             except httpx.HTTPStatusError as e:

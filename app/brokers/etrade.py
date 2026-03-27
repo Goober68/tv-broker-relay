@@ -170,6 +170,7 @@ class EtradeBroker(BrokerBase):
                 return BrokerOrderResult(
                     success=True, broker_order_id=order_id, order_open=is_open,
                     broker_request=body_str,
+                    broker_response=resp.text,
                 )
             except httpx.HTTPStatusError as e:
                 logger.error(f"E*Trade order error {e.response.status_code}: {e.response.text}")

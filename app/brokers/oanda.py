@@ -175,11 +175,12 @@ class OandaBroker(BrokerBase):
                         avg_fill_price=float(fill_price) if fill_price else None,
                         client_trade_id=client_trade_id,
                         broker_request=body_str,
+                        broker_response=resp.text,
                     )
                 elif "orderCancelTransaction" in data:
                     reason = data["orderCancelTransaction"].get("reason", "CANCELLED")
                     return BrokerOrderResult(success=False, error_message=f"Order cancelled by Oanda: {reason}",
-                                            broker_request=body_str)
+                                            broker_request=body_str, broker_response=resp.text)
                 elif "orderCreateTransaction" in data:
                     create_tx = data["orderCreateTransaction"]
                     return BrokerOrderResult(
@@ -188,10 +189,11 @@ class OandaBroker(BrokerBase):
                         filled_quantity=0.0,
                         order_open=True,
                         broker_request=body_str,
+                        broker_response=resp.text,
                     )
                 else:
                     logger.error(f"Unexpected Oanda response: {data}")
-                    return BrokerOrderResult(success=False, error_message=str(data), broker_request=body_str)
+                    return BrokerOrderResult(success=False, error_message=str(data), broker_request=body_str, broker_response=resp.text)
             except httpx.HTTPStatusError as e:
                 logger.error(f"Oanda order error {e.response.status_code}: {e.response.text}")
                 return BrokerOrderResult(

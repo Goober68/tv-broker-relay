@@ -167,7 +167,8 @@ class DeliveryOut(BaseModel):
     duration_ms: float | None
     raw_payload: str | None
     user_agent: str | None = None
-    broker_request: str | None = None   # outbound JSON sent to broker (from joined order row)
+    broker_request:  str | None = None   # outbound JSON sent to broker (from joined order row)
+    broker_response: str | None = None   # response body received from broker
 
     class Config:
         from_attributes = False  # manual construction — not direct ORM mapping
@@ -185,7 +186,7 @@ async def list_webhook_deliveries(
     from app.models.webhook_delivery import WebhookDelivery
     from sqlalchemy.orm import outerjoin
     stmt = (
-        select(WebhookDelivery, Order.broker_request)
+        select(WebhookDelivery, Order.broker_request, Order.broker_response)
         .outerjoin(Order, Order.id == WebhookDelivery.order_id)
         .where(WebhookDelivery.tenant_id == tenant.id)
         .order_by(desc(WebhookDelivery.created_at))
@@ -210,8 +211,9 @@ async def list_webhook_deliveries(
             raw_payload=d.raw_payload,
             user_agent=d.user_agent,
             broker_request=broker_request,
+            broker_response=broker_response,
         )
-        for d, broker_request in rows
+        for d, broker_request, broker_response in rows
     ]
 
 
