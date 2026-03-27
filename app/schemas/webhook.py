@@ -22,7 +22,7 @@ class WebhookPayload(BaseModel):
     comment: str | None = None
 
     # Limit / stop order controls
-    time_in_force: TimeInForce = TimeInForce.GTC
+    time_in_force: TimeInForce = TimeInForce.GFD
     expire_at: datetime | None = None
 
     @field_validator("expire_at", mode="before")
