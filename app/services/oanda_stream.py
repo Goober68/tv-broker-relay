@@ -3,7 +3,7 @@ OandaStreamManager — manages persistent HTTP streaming connections to Oanda.
 
 Two streams per account:
   1. Pricing stream  — real-time bid/ask for open position symbols
-     → Updates position.last_price and unrealized_pnl
+     → Updates position.last_price only (unrealized_pnl comes from REST poll)
      → Checks pending TrailTrigger rows and fires trailing stops
 
   2. Transaction stream — real-time account events (fills, closes, TP/SL hits)
@@ -322,10 +322,14 @@ class OandaStreamManager:
 
     async def _update_position_pnl(self, symbol: str, mid: float):
         """Update last_price for open positions from the price stream.
-        
-        P&L (unrealized_pnl) is intentionally NOT calculated here — forex P&L 
-        requires account currency conversion which Oanda already handles correctly
-        via the P&L poll. We only update last_price as a real-time price reference.
+
+        unrealized_pnl is NOT calculated here — forex P&L requires account
+        currency conversion that Oanda already handles correctly via the REST
+        poll (get_open_positions_pnl → /openPositions → unrealizedPL field).
+
+        We intentionally leave unrealized_pnl untouched so the pnl_poll value
+        always wins. Any stale value written by a previous version of this code
+        will be overwritten by the next pnl_poll cycle (every 60s).
         """
         from app.models.db import AsyncSessionLocal
         from app.models.position import Position
@@ -344,9 +348,10 @@ class OandaStreamManager:
             if not positions:
                 return
 
+            now = datetime.now(timezone.utc)
             for pos in positions:
                 pos.last_price    = mid
-                pos.last_price_at = datetime.now(timezone.utc)
+                pos.last_price_at = now
             await db.commit()
 
     async def _check_trail_triggers(

@@ -56,6 +56,7 @@ async def get_broker_for_tenant(
     # Pass FIFO randomization settings through to the adapter
     creds["fifo_randomize"]  = broker_account.fifo_randomize
     creds["fifo_max_offset"] = broker_account.fifo_max_offset
+    creds["account_alias"]   = account_alias  # relay alias — used for stream manager lookup
 
     match broker_name:
         case "oanda":

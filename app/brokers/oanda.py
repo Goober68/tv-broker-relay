@@ -28,12 +28,16 @@ class OandaBroker(BrokerBase):
         base_url: str,
         fifo_randomize: bool = False,
         fifo_max_offset: int = 3,
+        account_alias: str | None = None,
     ):
         self.api_key         = api_key
         self.account_id      = account_id
         self.base_url        = base_url.rstrip("/")
         self.fifo_randomize  = fifo_randomize
         self.fifo_max_offset = fifo_max_offset
+        # Relay account alias — used to look up the stream manager.
+        # Falls back to account_id if not provided (e.g. in from_settings / tests).
+        self.account_alias   = account_alias or account_id
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -48,6 +52,7 @@ class OandaBroker(BrokerBase):
             base_url        = creds.get("base_url", "https://api-fxtrade.oanda.com/v3"),
             fifo_randomize  = creds.get("fifo_randomize", False),
             fifo_max_offset = int(creds.get("fifo_max_offset", 3)),
+            account_alias   = creds.get("account_alias"),
         )
 
     @classmethod
@@ -317,22 +322,34 @@ class OandaBroker(BrokerBase):
                     short_units = float(pos.get("short", {}).get("units", 0))
                     net_units   = long_units + short_units
 
-                    long_pnl  = float(pos.get("long",  {}).get("unrealizedPL", 0))
-                    short_pnl = float(pos.get("short", {}).get("unrealizedPL", 0))
-                    unrealized_pnl = long_pnl + short_pnl
-
-                    # Average price: use whichever side has units
-                    if long_units > 0:
-                        avg_price = float(pos.get("long", {}).get("averagePrice", 0)) or None
-                    elif short_units < 0:
-                        avg_price = float(pos.get("short", {}).get("averagePrice", 0)) or None
+                    # Prefer the top-level unrealizedPL (account currency, net of both sides).
+                    # Fall back to summing long + short side fields for older API versions.
+                    top_level_pnl = pos.get("unrealizedPL")
+                    if top_level_pnl is not None:
+                        unrealized_pnl = float(top_level_pnl)
                     else:
-                        avg_price = None
+                        long_pnl  = float(pos.get("long",  {}).get("unrealizedPL", 0))
+                        short_pnl = float(pos.get("short", {}).get("unrealizedPL", 0))
+                        unrealized_pnl = long_pnl + short_pnl
+
+                    # last_price: use the live mid from the stream cache if available,
+                    # otherwise fall back to the average fill price from Oanda.
+                    from app.services.oanda_stream import get_manager
+                    manager = get_manager("oanda", self.account_alias)
+                    cached = manager.get_price(symbol) if manager else None
+                    if cached:
+                        last_price = cached["mid"]
+                    elif long_units > 0:
+                        last_price = float(pos.get("long", {}).get("averagePrice", 0)) or None
+                    elif short_units < 0:
+                        last_price = float(pos.get("short", {}).get("averagePrice", 0)) or None
+                    else:
+                        last_price = None
 
                     if net_units != 0:
                         result.append({
-                            "symbol":        symbol,
-                            "last_price":    avg_price,   # Oanda doesn't return mid in this endpoint
+                            "symbol":         symbol,
+                            "last_price":     last_price,
                             "unrealized_pnl": unrealized_pnl,
                         })
                 return result
