@@ -447,7 +447,7 @@ class OandaStreamManager:
                     body = {
                         "trailingStopLoss": {
                             "distance":    _fmt_price(symbol, trail_dist),
-                            "timeInForce": "GTC",
+                            "timeInForce": "GFD",
                         }
                     }
                     resp = await client.patch(url, json=body)
@@ -459,7 +459,7 @@ class OandaStreamManager:
                         "order": {
                             "type":        "TRAILING_STOP_LOSS",
                             "distance":    _fmt_price(symbol, trail_dist),
-                            "timeInForce": "GTC",
+                            "timeInForce": "GFD",
                         }
                     }
                     resp = await client.post(url, json=body)

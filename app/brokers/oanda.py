@@ -128,12 +128,12 @@ class OandaBroker(BrokerBase):
         if order.stop_loss is not None:
             body["order"]["stopLossOnFill"] = {
                 "price": _fmt_price(order.symbol, order.stop_loss),
-                "timeInForce": "GTC",
+                "timeInForce": "GFD",
             }
         if order.take_profit is not None:
             body["order"]["takeProfitOnFill"] = {
                 "price": _fmt_price(order.symbol, order.take_profit),
-                "timeInForce": "GTC",
+                "timeInForce": "GFD",
             }
         return body
 
