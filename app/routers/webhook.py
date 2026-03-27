@@ -2,7 +2,7 @@ import json
 import logging
 import time
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -22,21 +22,14 @@ _403 = HTTPException(status_code=403, detail="Invalid or missing API key")
 
 async def _resolve_tenant(
     tenant_id: uuid.UUID,
-    x_webhook_secret: str | None,
     payload_secret: str | None,
     db: AsyncSession,
 ) -> Tenant:
     """
-    Authenticate the webhook request.
-
-    Priority:
-      1. X-Webhook-Secret header  — used by paid TradingView plans and other senders
-      2. secret field in payload  — used by free TradingView plans (no custom headers)
-
-    If neither is present, or neither matches, the request is rejected.
+    Authenticate the webhook request via the 'secret' field in the payload.
+    Rejects if missing or invalid.
     """
-    secret = x_webhook_secret or payload_secret
-    if not secret:
+    if not payload_secret:
         raise _403
 
     result = await db.execute(
@@ -46,12 +39,9 @@ async def _resolve_tenant(
     if tenant is None:
         raise _403
 
-    key = await verify_api_key(db, secret, tenant_id)
+    key = await verify_api_key(db, payload_secret, tenant_id)
     if key is None:
-        logger.warning(
-            f"Invalid API key attempt for tenant {tenant_id} "
-            f"(via {'header' if x_webhook_secret else 'payload'})"
-        )
+        logger.warning(f"Invalid API key attempt for tenant {tenant_id}")
         raise _403
 
     return tenant
@@ -112,7 +102,6 @@ def _safe_payload_str(payload: WebhookPayload | None, raw_body: bytes) -> str | 
 async def receive_webhook(
     tenant_id: uuid.UUID,
     request: Request,
-    x_webhook_secret: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     t_start = time.monotonic()
@@ -138,7 +127,7 @@ async def receive_webhook(
     # Auth
     try:
         tenant = await _resolve_tenant(
-            tenant_id, x_webhook_secret,
+            tenant_id,
             payload_secret=payload.secret if payload else None,
             db=db,
         )

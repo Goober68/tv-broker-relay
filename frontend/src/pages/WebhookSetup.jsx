@@ -19,20 +19,7 @@ export default function WebhookSetupPage() {
   const tenantId  = user?.id
   const webhookUrl = `${window.location.origin}/webhook/${tenantId}`
 
-  // Two payload examples — one for each auth method
-  const examplePayloadHeader = JSON.stringify({
-    broker: "oanda",
-    account: "primary",
-    action: "{{strategy.order.action}}",
-    symbol: "EUR_USD",
-    instrument_type: "forex",
-    order_type: "market",
-    time_in_force: "FOK",
-    quantity: 1000,
-    comment: "{{strategy.order.comment}}"
-  }, null, 2)
-
-  const examplePayloadSecret = activeKey ? JSON.stringify({
+  const examplePayload = activeKey ? JSON.stringify({
     secret: activeKey.key_prefix + "... (your full key)",
     broker: "oanda",
     account: "primary",
@@ -40,7 +27,6 @@ export default function WebhookSetupPage() {
     symbol: "EUR_USD",
     instrument_type: "forex",
     order_type: "market",
-    time_in_force: "FOK",
     quantity: 1000,
     comment: "{{strategy.order.comment}}"
   }, null, 2) : null
@@ -66,46 +52,30 @@ export default function WebhookSetupPage() {
 
       {/* Step 2 */}
       <section className="panel p-6 space-y-4">
-        <StepHeader n={2} title="Add the X-Webhook-Secret header" />
-        {keysLoading ? (
-          <PageSpinner />
-        ) : !activeKey ? (
-          <Alert type="warn" message={<>No active API key. <a href="/api-keys" className="underline">Create one first.</a></>} />
-        ) : (
-          <>
-            <p className="text-xs text-base-400">In TradingView alert settings, add a custom header:</p>
-            <div className="bg-base-950 border border-base-700 rounded-md p-3 space-y-2 font-mono text-sm">
-              <div className="flex items-center gap-4">
-                <span className="text-base-500 w-28 flex-shrink-0">Header name</span>
-                <span className="text-base-100">X-Webhook-Secret</span>
-                <CopyButton value="X-Webhook-Secret" />
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-base-500 w-28 flex-shrink-0">Value</span>
-                <span className="text-base-300 text-xs">{activeKey.key_prefix}… (your full key)</span>
-              </div>
-            </div>
-            <p className="text-xs text-base-500">
-              Key prefix: <code className="font-mono bg-base-800 px-1 rounded">{activeKey.key_prefix}</code> ·{' '}
-              <a href="/api-keys" className="text-accent hover:underline">Manage keys →</a>
-            </p>
-          </>
-        )}
-      </section>
-
-      {/* Step 3 */}
-      <section className="panel p-6 space-y-4">
-        <StepHeader n={3} title="Configure the alert message body" />
+        <StepHeader n={2} title="Configure the alert message body" />
         <p className="text-xs text-base-400">
           Paste this into the <em>Message</em> field. TradingView will substitute the{' '}
           <code className="font-mono bg-base-800 px-1 rounded text-xs">{'{{variables}}'}</code> automatically.
         </p>
 
-        {/* Auth method tabs */}
-        <AuthMethodPayload
-          payloadHeader={examplePayloadHeader}
-          payloadSecret={examplePayloadSecret}
-        />
+        {keysLoading ? (
+          <PageSpinner />
+        ) : !activeKey ? (
+          <Alert type="warn" message={<>No active API key. <a href="/api-keys" className="underline">Create one first.</a></>} />
+        ) : (
+          <div className="relative">
+            <pre className="bg-base-950 border border-base-700 rounded-md p-4 text-xs font-mono text-base-300 overflow-x-auto">
+              {examplePayload}
+            </pre>
+            <div className="absolute top-3 right-3">
+              <CopyButton value={examplePayload || ''} />
+            </div>
+          </div>
+        )}
+        <p className="text-xs text-base-500">
+          Include your API key as the <code className="font-mono bg-base-800 px-1 rounded">secret</code> field.{' '}
+          <a href="/api-keys" className="text-accent hover:underline">Manage keys →</a>
+        </p>
       </section>
 
       {/* Delivery log */}
@@ -283,70 +253,6 @@ function HeaderRow({ label, value, highlight }) {
     <div className="flex items-start gap-3 text-xs">
       <span className="font-mono text-base-500 w-36 flex-shrink-0">{label}</span>
       <span className={`font-mono break-all ${valueColor}`}>{value}</span>
-    </div>
-  )
-}
-
-function AuthMethodPayload({ payloadHeader, payloadSecret }) {
-  const [method, setMethod] = useState('header')
-  const payload = method === 'header' ? payloadHeader : payloadSecret
-
-  return (
-    <div className="space-y-3">
-      {/* Method selector */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => setMethod('header')}
-          className={`px-3 py-1.5 text-xs font-mono rounded transition-colors ${
-            method === 'header'
-              ? 'bg-accent/20 text-accent border border-accent/30'
-              : 'bg-base-800 text-base-400 border border-base-700 hover:text-base-200'
-          }`}
-        >
-          Paid plan — header auth
-        </button>
-        <button
-          onClick={() => setMethod('secret')}
-          className={`px-3 py-1.5 text-xs font-mono rounded transition-colors ${
-            method === 'secret'
-              ? 'bg-accent/20 text-accent border border-accent/30'
-              : 'bg-base-800 text-base-400 border border-base-700 hover:text-base-200'
-          }`}
-        >
-          Free plan — secret in payload
-        </button>
-      </div>
-
-      {/* Description */}
-      <p className="text-xs text-base-500">
-        {method === 'header' ? (
-          <>
-            Secret is sent as the <code className="font-mono bg-base-800 px-1 rounded">X-Webhook-Secret</code> header.
-            Available on TradingView Pro, Pro+, and Premium plans.
-          </>
-        ) : (
-          <>
-            Secret is included directly in the JSON payload as the <code className="font-mono bg-base-800 px-1 rounded">secret</code> field.
-            Works on all TradingView plans including free.
-          </>
-        )}
-      </p>
-
-      {/* Payload */}
-      <div className="relative">
-        <pre className="bg-base-950 border border-base-700 rounded-md p-4 text-xs font-mono text-base-300 overflow-x-auto">
-          {payload}
-        </pre>
-        <div className="absolute top-3 right-3">
-          <CopyButton value={payload || ''} />
-        </div>
-      </div>
-
-      {method === 'secret' && (
-        <p className="text-xs text-warn">
-          Keep your secret secure — anyone with this URL and secret can execute trades on your account.
-        </p>
-      )}
     </div>
   )
 }

@@ -70,7 +70,7 @@ export default function ApiKeysPage() {
             <CopyButton value={newKey} label="Copy key" />
           </div>
           <p className="text-xs text-base-500 mt-3">
-            Add this as an <code className="font-mono bg-base-800 px-1 py-0.5 rounded">X-Webhook-Secret</code> header in your TradingView alert.
+            Add this as the <code className="font-mono bg-base-800 px-1 py-0.5 rounded">secret</code> field in your TradingView alert payload.
           </p>
         </div>
       )}
