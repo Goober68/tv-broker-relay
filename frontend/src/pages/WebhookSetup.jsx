@@ -130,8 +130,21 @@ function DeliveryRow({ delivery: d }) {
   const [expanded, setExpanded] = useState(false)
 
   const fmtJson = (str) => {
-    try { return JSON.stringify(JSON.parse(str), null, 2) }
-    catch { return str || '' }
+    try {
+      // Parse the top-level JSON, then recursively expand any string values
+      // that are themselves valid JSON (e.g. Tradovate's "params" field).
+      const expandStrings = (val) => {
+        if (typeof val === 'string') {
+          try { return expandStrings(JSON.parse(val)) } catch { return val }
+        }
+        if (Array.isArray(val)) return val.map(expandStrings)
+        if (val && typeof val === 'object') {
+          return Object.fromEntries(Object.entries(val).map(([k, v]) => [k, expandStrings(v)]))
+        }
+        return val
+      }
+      return JSON.stringify(expandStrings(JSON.parse(str)), null, 2)
+    } catch { return str || '' }
   }
 
   // raw_payload = what TradingView actually sent (secret already stripped by relay)
