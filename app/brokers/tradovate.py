@@ -177,8 +177,10 @@ class TradovateBroker(BrokerBase):
 
         if has_trail:
             # Trailing stop — use /orderStrategy/startOrderStrategy with params JSON
-            # autoTrail fields: stopLoss=distance, trigger=profit before trail activates,
-            # freq=minimum move before trail steps
+            # IMPORTANT: startOrderStrategy bracket values are RELATIVE offsets from
+            # entry price, not absolute prices. The offset converter has already
+            # converted trail_dist/trail_trigger/trail_update to price differences.
+            # take_profit and stop_loss must also be relative here — subtract entry price.
             import json as _json
             bracket: dict = {
                 "qty":          int(order.quantity),
@@ -186,7 +188,17 @@ class TradovateBroker(BrokerBase):
                 "stopLoss":     order.trail_dist,
             }
             if order.take_profit is not None:
-                bracket["profitTarget"] = order.take_profit
+                # Convert absolute TP back to relative offset for startOrderStrategy
+                if order.price:
+                    bracket["profitTarget"] = order.take_profit - order.price
+                else:
+                    bracket["profitTarget"] = order.take_profit
+            if order.stop_loss is not None:
+                # Convert absolute SL back to relative offset (always positive distance)
+                if order.price:
+                    bracket["stopLoss"] = abs(order.stop_loss - order.price)
+                else:
+                    bracket["stopLoss"] = order.stop_loss
             auto_trail: dict = {"stopLoss": order.trail_dist}
             if order.trail_trigger is not None:
                 auto_trail["trigger"] = order.trail_trigger
