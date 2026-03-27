@@ -88,7 +88,7 @@ class OandaBroker(BrokerBase):
             return {}
 
         body: dict = {"order": {"instrument": order.symbol, "units": units}}
-        tif = order.time_in_force if order.time_in_force else TimeInForce.GFD
+        tif = order.time_in_force if order.time_in_force else TimeInForce.GTC
 
         # positionFill DEFAULT — lot size randomization handles FIFO uniqueness.
 
@@ -108,7 +108,7 @@ class OandaBroker(BrokerBase):
 
         if order.order_type == OrderType.MARKET:
             body["order"]["type"] = "MARKET"
-            body["order"]["timeInForce"] = tif if tif in (TimeInForce.FOK, TimeInForce.IOC, TimeInForce.GFD) else TimeInForce.GFD
+            body["order"]["timeInForce"] = tif if tif in (TimeInForce.FOK, TimeInForce.IOC) else TimeInForce.FOK
         elif order.order_type == OrderType.LIMIT:
             body["order"]["type"] = "LIMIT"
             body["order"]["price"] = _fmt_price(order.symbol, order.price)
@@ -128,12 +128,12 @@ class OandaBroker(BrokerBase):
         if order.stop_loss is not None:
             body["order"]["stopLossOnFill"] = {
                 "price": _fmt_price(order.symbol, order.stop_loss),
-                "timeInForce": "GFD",
+                "timeInForce": "GTC",
             }
         if order.take_profit is not None:
             body["order"]["takeProfitOnFill"] = {
                 "price": _fmt_price(order.symbol, order.take_profit),
-                "timeInForce": "GFD",
+                "timeInForce": "GTC",
             }
         return body
 

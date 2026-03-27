@@ -22,7 +22,7 @@ class WebhookPayload(BaseModel):
     comment: str | None = None
 
     # Limit / stop order controls
-    time_in_force: TimeInForce = TimeInForce.GFD
+    time_in_force: TimeInForce = TimeInForce.GTC
     expire_at: datetime | None = None
 
     @field_validator("expire_at", mode="before")
@@ -162,9 +162,9 @@ class WebhookPayload(BaseModel):
     @model_validator(mode="after")
     def tif_market_order_rules(self) -> "WebhookPayload":
         if self.order_type == OrderType.MARKET:
-            if self.time_in_force not in (TimeInForce.FOK, TimeInForce.IOC, TimeInForce.GFD):
+            if self.time_in_force not in (TimeInForce.FOK, TimeInForce.IOC):
                 raise ValueError(
-                    f"Market orders only support FOK, IOC, or GFD time_in_force, got {self.time_in_force}"
+                    f"Market orders only support FOK or IOC time_in_force, got {self.time_in_force}"
                 )
         return self
 
