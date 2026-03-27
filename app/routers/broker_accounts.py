@@ -298,7 +298,6 @@ async def remove_instrument(
 
 class FifoUpdate(BaseModel):
     fifo_randomize: bool
-    fifo_max_offset: int = 3
 
 
 @router.patch("/{account_id}/fifo", status_code=200)
@@ -308,7 +307,7 @@ async def update_fifo(
     tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update FIFO randomization settings for a broker account."""
+    """Update FIFO avoidance setting for a broker account."""
     result = await db.execute(
         select(BrokerAccount).where(
             BrokerAccount.id        == account_id,
@@ -318,13 +317,11 @@ async def update_fifo(
     account = result.scalar_one_or_none()
     if account is None:
         raise HTTPException(status_code=404, detail="Broker account not found")
-    account.fifo_randomize  = body.fifo_randomize
-    account.fifo_max_offset = max(1, min(body.fifo_max_offset, 10))  # clamp 1-10
+    account.fifo_randomize = body.fifo_randomize
     await db.commit()
     return {
-        "id":              account.id,
-        "fifo_randomize":  account.fifo_randomize,
-        "fifo_max_offset": account.fifo_max_offset,
+        "id":             account.id,
+        "fifo_randomize": account.fifo_randomize,
     }
 
 

@@ -72,20 +72,14 @@ class OandaBroker(BrokerBase):
     def _build_order_body(self, order: Order) -> dict:
         from app.models.order import TimeInForce
 
-        import random
-        qty = int(order.quantity)
-        if self.fifo_randomize and order.action in (OrderAction.BUY, OrderAction.SELL):
-            # Add random offset so each trade has a unique size — required for
-            # FIFO compliance on US Oanda accounts when pyramiding positions.
-            # The relay records the original quantity; only the broker-side size varies.
-            offset = random.randint(1, max(1, self.fifo_max_offset))
-            # Alternate add/subtract based on order ID parity for variety
-            if order.id and order.id % 2 == 0:
-                offset = -offset
-            qty = max(1, qty + offset)
-
-        # Store the actual broker-side quantity for audit trail
-        order.broker_quantity = float(qty)
+        # broker_quantity is pre-set by order_processor._resolve_fifo_quantity()
+        # for FIFO-enabled accounts before submission. Use it if available,
+        # otherwise fall back to the requested quantity (non-FIFO accounts).
+        if order.broker_quantity is not None:
+            qty = int(order.broker_quantity)
+        else:
+            qty = int(order.quantity)
+            order.broker_quantity = float(qty)
 
         units = str(qty)
         if order.action == OrderAction.SELL:
@@ -300,6 +294,29 @@ class OandaBroker(BrokerBase):
             except Exception:
                 logger.exception(f"Error fetching Oanda position for {symbol}")
                 return 0.0
+
+    async def get_open_trade_quantities(self, account: str, symbol: str) -> set[int]:
+        """
+        Return the set of unit sizes for all currently open trades on this
+        instrument. Used by FIFO quantity resolution to find a unique size.
+
+        Oanda /openTrades returns individual trade legs (not the net position),
+        so we get the exact sizes Oanda is tracking for FIFO purposes.
+        Returns absolute (unsigned) unit counts.
+        """
+        account_id = self._resolve_account(account)
+        async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/accounts/{account_id}/openTrades",
+                    params={"instrument": symbol},
+                )
+                resp.raise_for_status()
+                trades = resp.json().get("trades", [])
+                return {abs(int(float(t.get("currentUnits", 0)))) for t in trades}
+            except Exception:
+                logger.exception(f"Error fetching open trades for {symbol} — FIFO will use base quantity")
+                return set()
 
     async def get_open_positions_pnl(self, account: str) -> list[dict]:
         """

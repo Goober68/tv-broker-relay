@@ -107,6 +107,57 @@ async def _create_trail_trigger(db, order, payload, result):
         logger.exception(f"Error creating trail trigger for order {order.id}: {e}")
 
 
+async def _resolve_fifo_quantity(broker, order: Order) -> int:
+    """
+    Determine a unique broker-side quantity for FIFO-enabled Oanda accounts.
+
+    NFA FIFO rules require each open trade to have a unique size so that
+    individual legs can be identified and closed without ambiguity. Random
+    offsets risk collisions; this function guarantees uniqueness by:
+
+      1. Fetching the set of currently-open trade sizes from Oanda
+      2. Starting at the requested quantity and walking outward ±1, ±2, ±3...
+         alternating direction (add first, then subtract), filling the first gap
+
+    Example — requested qty=2000, existing sizes={2000, 2001, 1999}:
+      Try 2001 → taken. Try 1999 → taken. Try 2002 → free → use 2002.
+
+    The minimum returned value is 1. The search is bounded at ±500 units
+    to prevent runaway loops; if no gap is found the base quantity is used
+    and a warning is logged (operator should investigate).
+    """
+    from app.brokers.oanda import OandaBroker
+    if not isinstance(broker, OandaBroker) or not broker.fifo_randomize:
+        return int(order.quantity)
+
+    base = int(order.quantity)
+    try:
+        taken = await broker.get_open_trade_quantities(order.account, order.symbol)
+    except Exception:
+        logger.exception("FIFO: failed to fetch open trade quantities — using base qty")
+        return base
+
+    if not taken:
+        # No existing trades — base quantity is inherently unique
+        return base
+
+    MAX_SEARCH = 500
+    for step in range(1, MAX_SEARCH + 1):
+        for candidate in (base + step, base - step):
+            if candidate >= 1 and candidate not in taken:
+                logger.info(
+                    f"FIFO: {order.symbol} base={base} taken={sorted(taken)} "
+                    f"→ using {candidate} (step={step})"
+                )
+                return candidate
+
+    logger.warning(
+        f"FIFO: could not find unique qty for {order.symbol} within ±{MAX_SEARCH} "
+        f"of {base} (taken={sorted(taken)}). Using base qty — check for stale positions."
+    )
+    return base
+
+
 async def process_webhook(
     db: AsyncSession,
     payload: WebhookPayload,
@@ -258,6 +309,11 @@ async def process_webhook(
     # --- 6. Submit to broker ---
     broker = await get_broker_for_tenant(payload.broker, payload.account, tenant_id, db)
     order.status = OrderStatus.SUBMITTED
+
+    # FIFO: resolve a unique broker-side quantity before submission.
+    # Only applies to Oanda BUY/SELL — CLOSE uses "ALL" units, not a size.
+    if payload.broker == "oanda" and payload.action.value in ("buy", "sell"):
+        order.broker_quantity = float(await _resolve_fifo_quantity(broker, order))
 
     try:
         if replaced_order is not None:

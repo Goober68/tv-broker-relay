@@ -248,21 +248,19 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
 }
 
 function FifoSettings({ account, onRefresh }) {
-  const [enabled, setEnabled]     = useState(account.fifo_randomize || false)
-  const [maxOffset, setMaxOffset] = useState(account.fifo_max_offset || 3)
-  const [saving, setSaving]       = useState(false)
-  const [saved, setSaved]         = useState(false)
+  const [enabled, setEnabled] = useState(account.fifo_randomize || false)
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
 
   // Sync local state when account prop updates after refetch
   useEffect(() => {
     setEnabled(account.fifo_randomize || false)
-    setMaxOffset(account.fifo_max_offset || 3)
-  }, [account.fifo_randomize, account.fifo_max_offset])
+  }, [account.fifo_randomize])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      await brokersApi.updateFifo(account.id, { fifo_randomize: enabled, fifo_max_offset: parseInt(maxOffset) })
+      await brokersApi.updateFifo(account.id, { fifo_randomize: enabled })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
       onRefresh()
@@ -274,10 +272,10 @@ function FifoSettings({ account, onRefresh }) {
     <div className="border-t border-base-800 pt-4">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <p className="text-xs font-medium text-base-300">FIFO size randomization</p>
+          <p className="text-xs font-medium text-base-300">FIFO avoidance</p>
           <p className="text-xs text-base-500 mt-0.5">
-            Adds a small random offset to each order size so Oanda can identify
-            individual pyramid legs (required for US NFA FIFO compliance)
+            Adjusts each order size to be unique so Oanda can identify individual
+            pyramid legs (required for US NFA FIFO compliance)
           </p>
         </div>
         <div
@@ -287,25 +285,6 @@ function FifoSettings({ account, onRefresh }) {
           <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${enabled ? 'left-4' : 'left-0.5'}`} />
         </div>
       </div>
-
-      {enabled && (
-        <div className="flex items-center gap-3 animate-fade-in">
-          <div>
-            <label className="block text-xs text-base-400 mb-1">Max offset (units)</label>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              className="input py-1 text-xs font-mono w-20"
-              value={maxOffset}
-              onChange={e => setMaxOffset(e.target.value)}
-            />
-          </div>
-          <div className="text-xs text-base-500 pt-4">
-            e.g. <span className="font-mono text-base-300">3</span> → order sizes vary by ±1 to ±3 units
-          </div>
-        </div>
-      )}
 
       <button
         onClick={handleSave}
