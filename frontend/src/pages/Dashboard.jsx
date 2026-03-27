@@ -205,11 +205,11 @@ function PositionRow({ pos }) {
         <div className="flex gap-5">
           <div>
             <div className="text-[10px] text-base-500 mb-0.5">Today</div>
-            <PnlValue value={(pos.daily_realized_pnl || 0) * mult} prefix="$" decimals={2} />
+            <PnlValue value={pos.daily_realized_pnl || 0} prefix="$" decimals={2} />
           </div>
           <div>
             <div className="text-[10px] text-base-500 mb-0.5">Realized</div>
-            <PnlValue value={(pos.realized_pnl || 0) * mult} prefix="$" decimals={2} />
+            <PnlValue value={pos.realized_pnl || 0} prefix="$" decimals={2} />
           </div>
           {pos.unrealized_pnl != null && (
             <div>
