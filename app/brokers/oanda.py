@@ -88,7 +88,7 @@ class OandaBroker(BrokerBase):
             return {}
 
         body: dict = {"order": {"instrument": order.symbol, "units": units}}
-        tif = order.time_in_force if order.time_in_force else TimeInForce.GTC
+        tif = order.time_in_force if order.time_in_force else TimeInForce.GFD
 
         # positionFill DEFAULT — lot size randomization handles FIFO uniqueness.
 
