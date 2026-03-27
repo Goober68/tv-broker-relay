@@ -181,7 +181,6 @@ class TradovateBroker(BrokerBase):
             # entry price, not absolute prices. The offset converter has already
             # converted trail_dist/trail_trigger/trail_update to price differences.
             # take_profit and stop_loss must also be relative here — subtract entry price.
-            import json as _json
             # startOrderStrategy bracket values are signed relative offsets:
             # positive = profit direction, negative = loss direction
             # For a buy: TP is positive (+25), SL/trail is negative (-25)
@@ -257,6 +256,8 @@ class TradovateBroker(BrokerBase):
             body = base_body
             endpoint = "/order/placeOrder"
 
+        import json as _json
+        body_str = _json.dumps(body, default=str)
         async with httpx.AsyncClient(headers=self._headers(token), timeout=15.0) as client:
             try:
                 resp = await client.post(f"{self.base_url}{endpoint}", json=body)
@@ -266,20 +267,21 @@ class TradovateBroker(BrokerBase):
                     return BrokerOrderResult(
                         success=False,
                         error_message=data["failureReason"],
-                        broker_request=_json.dumps(body, default=str),
+                        broker_request=body_str,
                         broker_response=_json.dumps(data, default=str),
                     )
                 order_id = str(data.get("orderId", ""))
                 is_open = order.order_type != OrderType.MARKET
                 return BrokerOrderResult(
-                    success=True, broker_order_id=order_id, order_open=is_open
+                    success=True, broker_order_id=order_id, order_open=is_open,
+                    broker_request=body_str,
                 )
             except httpx.HTTPStatusError as e:
                 logger.error(f"Tradovate order error {e.response.status_code}: {e.response.text}")
                 return BrokerOrderResult(
                     success=False,
                     error_message=e.response.text,
-                    broker_request=_json.dumps(body, default=str),
+                    broker_request=body_str,
                     broker_response=e.response.text,
                 )
             except Exception as e:
@@ -287,7 +289,7 @@ class TradovateBroker(BrokerBase):
                 return BrokerOrderResult(
                     success=False,
                     error_message=str(e),
-                    broker_request=_json.dumps(body, default=str),
+                    broker_request=body_str,
                 )
 
     async def _close_position(self, token: str, account: str, symbol: str) -> BrokerOrderResult:
@@ -306,7 +308,8 @@ class TradovateBroker(BrokerBase):
                         broker_request=_json.dumps(body, default=str),
                         broker_response=_json.dumps(data, default=str),
                     )
-                return BrokerOrderResult(success=True, broker_order_id=str(data.get("orderId", "")))
+                return BrokerOrderResult(success=True, broker_order_id=str(data.get("orderId", "")),
+                                         broker_request=_json.dumps(body, default=str))
             except Exception as e:
                 return BrokerOrderResult(success=False, error_message=str(e))
 

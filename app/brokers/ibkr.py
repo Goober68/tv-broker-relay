@@ -168,6 +168,8 @@ class IBKRBroker(BrokerBase):
                     )
 
             body = self._build_order_body(order, account_id, conid)
+            import json as _json
+            body_str = _json.dumps(body, default=str)
 
             try:
                 resp = await client.post(
@@ -184,6 +186,7 @@ class IBKRBroker(BrokerBase):
                             success=True,
                             broker_order_id=str(item["order_id"]),
                             order_open=order.order_type != OrderType.MARKET,
+                            broker_request=body_str,
                         )
                     if "messageIds" in item:
                         confirmed = await self._confirm_order(client, item["id"])
@@ -192,6 +195,7 @@ class IBKRBroker(BrokerBase):
                                 success=True,
                                 broker_order_id=str(item["id"]),
                                 order_open=order.order_type != OrderType.MARKET,
+                                broker_request=body_str,
                             )
                         return BrokerOrderResult(
                             success=False, error_message="IBKR order confirmation failed"

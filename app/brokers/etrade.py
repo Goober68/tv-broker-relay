@@ -156,6 +156,8 @@ class EtradeBroker(BrokerBase):
             "Authorization": self._oauth_header("POST", url),
             "Content-Type": "application/json",
         }
+        import json as _json
+        body_str = _json.dumps(body, default=str)
         async with httpx.AsyncClient(headers=headers, timeout=15.0) as client:
             try:
                 resp = await client.post(url, json=body)
@@ -166,7 +168,8 @@ class EtradeBroker(BrokerBase):
                 )
                 is_open = order.order_type != OrderType.MARKET
                 return BrokerOrderResult(
-                    success=True, broker_order_id=order_id, order_open=is_open
+                    success=True, broker_order_id=order_id, order_open=is_open,
+                    broker_request=body_str,
                 )
             except httpx.HTTPStatusError as e:
                 logger.error(f"E*Trade order error {e.response.status_code}: {e.response.text}")

@@ -86,6 +86,8 @@ class AlpacaBroker(BrokerBase):
             return await self._close_position(order.account, order.symbol)
 
         body = self._build_order_body(order)
+        import json as _json
+        body_str = _json.dumps(body, default=str)
 
         async with httpx.AsyncClient(
             headers=self._headers(), timeout=15.0
@@ -109,12 +111,14 @@ class AlpacaBroker(BrokerBase):
                         broker_order_id=order_id,
                         filled_quantity=filled,
                         avg_fill_price=avg,
+                        broker_request=body_str,
                     )
 
                 return BrokerOrderResult(
                     success=True,
                     broker_order_id=order_id,
                     order_open=is_open,
+                    broker_request=body_str,
                 )
 
             except httpx.HTTPStatusError as e:
