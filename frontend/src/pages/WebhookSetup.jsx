@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../lib/auth-context'
 import { apiKeys as apiKeysApi, orders as ordersApi } from '../lib/api'
 import { useApi, usePolling } from '../hooks/useApi'
+import { useEventSource } from '../hooks/useEventSource'
 import { PageSpinner, SectionHeader, StatusBadge, CopyButton, Alert, EmptyState } from '../components/ui'
 
 export default function WebhookSetupPage() {
@@ -12,9 +13,12 @@ export default function WebhookSetupPage() {
   const { data: keys, loading: keysLoading } = useApi(() => apiKeysApi.list())
   const { data: deliveries, loading: dlLoading, refetch } = usePolling(
     () => ordersApi.deliveries({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
-    10_000,
+    30_000,  // fallback poll every 30s — SSE handles instant updates
     [page]
   )
+
+  // SSE: refetch deliveries list instantly when a new webhook arrives
+  useEventSource('/api/events', 'delivery', () => { if (page === 0) refetch() })
 
   const activeKey = keys?.find(k => k.is_active)
   const tenantId  = user?.id
@@ -126,8 +130,21 @@ function DeliveryRow({ delivery: d }) {
   const [expanded, setExpanded] = useState(false)
 
   const fmtJson = (str) => {
-    try { return JSON.stringify(JSON.parse(str), null, 2) }
-    catch { return str || '' }
+    try {
+      // Parse the top-level JSON, then recursively expand any string values
+      // that are themselves valid JSON (e.g. Tradovate's "params" field).
+      const expandStrings = (val) => {
+        if (typeof val === 'string') {
+          try { return expandStrings(JSON.parse(val)) } catch { return val }
+        }
+        if (Array.isArray(val)) return val.map(expandStrings)
+        if (val && typeof val === 'object') {
+          return Object.fromEntries(Object.entries(val).map(([k, v]) => [k, expandStrings(v)]))
+        }
+        return val
+      }
+      return JSON.stringify(expandStrings(JSON.parse(str)), null, 2)
+    } catch { return str || '' }
   }
 
   // raw_payload = what TradingView actually sent (secret already stripped by relay)
