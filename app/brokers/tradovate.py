@@ -214,12 +214,15 @@ class TradovateBroker(BrokerBase):
                 auto_trail["freq"] = order.trail_update
             bracket["autoTrail"] = auto_trail
 
+            entry_version: dict = {
+                "orderQty":    int(order.quantity),
+                "orderType":   order_type_map[order.order_type],
+                "timeInForce": tif,
+            }
+            if order.price and order.order_type != OrderType.MARKET:
+                entry_version["price"] = order.price
             params_str = _json.dumps({
-                "entryVersion": {
-                    "orderQty":   int(order.quantity),
-                    "orderType":  order_type_map[order.order_type],
-                    "timeInForce": tif,
-                },
+                "entryVersion": entry_version,
                 "brackets": [bracket],
             })
             strat_body = {

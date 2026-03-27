@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from app.models.db import get_db
@@ -215,6 +216,52 @@ async def list_webhook_deliveries(
         )
         for d, broker_request, broker_response in rows
     ]
+
+
+
+# ── Server-Sent Events ─────────────────────────────────────────────────────────
+
+@router.get("/events")
+async def sse_events(
+    request: Request,
+    token: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Server-Sent Events stream for real-time delivery notifications.
+    Emits a 'delivery' event whenever a webhook is processed.
+    Sends a heartbeat comment every 15s to keep the connection alive.
+
+    The JWT is validated once at connect time via the standard Bearer header.
+    EventSource in the browser cannot set headers, so the frontend passes the
+    token as a query parameter: /api/events?token=<access_token>
+    """
+    # Authenticate — EventSource cannot send headers so token comes as query param
+    import uuid as _uuid
+    from jose import JWTError
+    from app.services.auth import decode_access_token, get_tenant_by_id
+    from fastapi import HTTPException as _HTTPException
+    if not token:
+        raise _HTTPException(status_code=401, detail="Missing token")
+    try:
+        payload = decode_access_token(token)
+        tenant_id = _uuid.UUID(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise _HTTPException(status_code=401, detail="Invalid token")
+    tenant = await get_tenant_by_id(db, tenant_id)
+    if tenant is None or not tenant.is_active:
+        raise _HTTPException(status_code=401, detail="Invalid token")
+
+    from app.services.events import event_stream
+    return StreamingResponse(
+        event_stream(tenant.id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # tell Nginx/Caddy not to buffer the stream
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Position Sync ──────────────────────────────────────────────────────────────

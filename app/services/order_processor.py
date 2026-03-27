@@ -398,4 +398,21 @@ async def process_webhook(
 
     await db.commit()
     logger.info(f"Order finalized: {order}")
+
+    # Push real-time event to all connected SSE clients
+    try:
+        from app.services.events import push_delivery_event
+        push_delivery_event({
+            "order_id":   order.id,
+            "tenant_id":  str(tenant_id),
+            "broker":     order.broker,
+            "account":    order.account,
+            "symbol":     order.symbol,
+            "action":     order.action.value if hasattr(order.action, "value") else order.action,
+            "status":     order.status.value if hasattr(order.status, "value") else order.status,
+            "quantity":   order.quantity,
+        })
+    except Exception:
+        logger.exception("Failed to push SSE delivery event — ignoring")
+
     return order
