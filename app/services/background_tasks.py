@@ -560,6 +560,65 @@ async def _auto_close_once():
             logger.info(f"AUTO-CLOSE complete: {summary}")
 
 
+# ── Oanda Stream Manager ──────────────────────────────────────────────────────
+
+async def _oanda_stream_once():
+    """
+    Check all active Oanda broker accounts.
+    If there are open positions → ensure price + transaction streams are running.
+    If all positions are flat → stop the streams to avoid unnecessary connections.
+    """
+    from app.models.broker_account import BrokerAccount
+    from app.services.credentials import decrypt_credentials
+    from app.services.oanda_stream import get_or_create_manager, remove_manager
+
+    async with AsyncSessionLocal() as db:
+        # Get all active Oanda accounts
+        result = await db.execute(
+            select(BrokerAccount).where(
+                BrokerAccount.broker    == "oanda",
+                BrokerAccount.is_active == True,  # noqa: E712
+            )
+        )
+        accounts = result.scalars().all()
+
+        for acct in accounts:
+            try:
+                creds = decrypt_credentials(acct.credentials_encrypted)
+            except Exception:
+                continue
+
+            # Find open positions for this account
+            pos_result = await db.execute(
+                select(Position).where(
+                    Position.tenant_id == acct.tenant_id,
+                    Position.broker    == "oanda",
+                    Position.account   == acct.account_alias,
+                    func.abs(Position.quantity) > 1e-9,
+                )
+            )
+            open_positions = pos_result.scalars().all()
+            symbols = {p.symbol for p in open_positions}
+
+            manager = get_or_create_manager(
+                broker     = "oanda",
+                account    = acct.account_alias,
+                api_key    = creds.get("api_key", ""),
+                account_id = creds.get("account_id", ""),
+                base_url   = creds.get("base_url", "https://api-fxtrade.oanda.com/v3"),
+            )
+
+            if symbols:
+                if not manager.is_running():
+                    await manager.start(symbols)
+                else:
+                    await manager.update_symbols(symbols)
+            else:
+                if manager.is_running():
+                    await manager.stop()
+                    remove_manager("oanda", acct.account_alias)
+
+
 # ── Task Launcher ──────────────────────────────────────────────────────────────
 
 def start_background_tasks() -> list[asyncio.Task]:
@@ -599,6 +658,11 @@ def start_background_tasks() -> list[asyncio.Task]:
             # Auto-close: check every 60s whether any account needs session-end close
             _run_forever("auto_close", 60, _auto_close_once),
             name="auto_close",
+        ),
+        asyncio.create_task(
+            # Oanda stream manager: check every 30s, connect/disconnect as needed
+            _run_forever("oanda_stream", 30, _oanda_stream_once),
+            name="oanda_stream",
         ),
     ]
     return tasks

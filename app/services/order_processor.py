@@ -53,6 +53,60 @@ async def _get_pending_exposure(
     return total
 
 
+async def _create_trail_trigger(db, order, payload, result):
+    """Create a TrailTrigger row for Oanda streaming trail stop activation."""
+    from app.models.trail_trigger import TrailTrigger
+    from app.models.broker_account import BrokerAccount
+    from sqlalchemy import select
+
+    try:
+        # Get broker account ID
+        acct_result = await db.execute(
+            select(BrokerAccount).where(
+                BrokerAccount.tenant_id    == order.tenant_id,
+                BrokerAccount.broker       == "oanda",
+                BrokerAccount.account_alias == order.account,
+            )
+        )
+        acct = acct_result.scalar_one_or_none()
+        if not acct:
+            return
+
+        trigger = TrailTrigger(
+            tenant_id         = order.tenant_id,
+            broker_account_id = acct.id,
+            order_id          = order.id,
+            broker            = "oanda",
+            account           = order.account,
+            symbol            = order.symbol,
+            direction         = order.action.value if hasattr(order.action, 'value') else order.action,
+            trigger_price     = payload.trail_trigger,   # absolute price (unchanged by converter)
+            trail_distance    = order.trail_dist,         # converted distance (post offset_converter)
+            trade_id          = result.client_trade_id,
+            status            = "pending",
+        )
+        db.add(trigger)
+        await db.commit()
+        await db.refresh(trigger)
+
+        # Register with the stream manager if running
+        from app.services.oanda_stream import get_manager
+        manager = get_manager("oanda", order.account)
+        if manager:
+            await manager.add_trail_trigger({
+                "id":             trigger.id,
+                "symbol":         trigger.symbol,
+                "direction":      trigger.direction,
+                "trigger_price":  trigger.trigger_price,
+                "trail_distance": trigger.trail_distance,
+                "trade_id":       trigger.trade_id,
+                "tenant_id":      str(trigger.tenant_id),
+            })
+
+    except Exception as e:
+        logger.exception(f"Error creating trail trigger for order {order.id}: {e}")
+
+
 async def process_webhook(
     db: AsyncSession,
     payload: WebhookPayload,
@@ -227,6 +281,7 @@ async def process_webhook(
             order.broker_request = result.broker_request
         if result.broker_response:
             order.broker_response = result.broker_response
+
         order.filled_quantity = result.filled_quantity
         order.avg_fill_price = result.avg_fill_price
 
@@ -235,6 +290,13 @@ async def process_webhook(
         elif result.filled_quantity > 0:
             order.status = OrderStatus.FILLED
             await apply_fill_to_position(db, order, result.filled_quantity, result.avg_fill_price)
+            # Create trail trigger for Oanda after confirmed fill
+            if (
+                payload.broker == "oanda"
+                and payload.trail_trigger is not None
+                and payload.trail_dist is not None
+            ):
+                await _create_trail_trigger(db, order, payload, result)
         else:
             order.status = OrderStatus.SUBMITTED
 
