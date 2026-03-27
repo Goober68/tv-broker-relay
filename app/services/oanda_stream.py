@@ -128,15 +128,16 @@ class OandaStreamManager:
         logger.info(f"Oanda stream stopped for {self.broker}/{self.account}")
 
     async def update_symbols(self, symbols: set[str]):
-        """Update subscribed symbols — restart price stream if changed."""
-        if symbols != self._subscribed:
-            self._subscribed = set(symbols)
-            if self._price_task and not self._price_task.done():
-                self._price_task.cancel()
-            self._price_task = asyncio.create_task(
-                self._run_price_stream(),
-                name=f"oanda_price_{self.account}",
-            )
+        """Update subscribed symbols — restart price stream only if symbols changed."""
+        if symbols == self._subscribed:
+            return  # no change — don't restart
+        self._subscribed = set(symbols)
+        if self._price_task and not self._price_task.done():
+            self._price_task.cancel()
+        self._price_task = asyncio.create_task(
+            self._run_price_stream(),
+            name=f"oanda_price_{self.account}",
+        )
 
     def get_price(self, symbol: str) -> dict | None:
         return self._prices.get(symbol)
