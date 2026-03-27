@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useAuth } from '../lib/auth-context'
 import { apiKeys as apiKeysApi, orders as ordersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
@@ -154,56 +154,42 @@ export default function WebhookSetupPage() {
 function DeliveryRow({ delivery: d }) {
   const [expanded, setExpanded] = useState(false)
 
-  // Parse raw_payload for pretty display
-  let parsedPayload = null
-  let parseError = null
-  if (d.raw_payload) {
-    try {
-      parsedPayload = JSON.parse(d.raw_payload)
-    } catch {
-      parseError = d.raw_payload
-    }
+  const fmtJson = (str) => {
+    try { return JSON.stringify(JSON.parse(str), null, 2) }
+    catch { return str || '' }
   }
+
+  // raw_payload = what TradingView actually sent (secret already stripped by relay)
+  const inboundJson  = d.raw_payload  ? fmtJson(d.raw_payload)  : null
+  // broker_request = outbound JSON the relay built and sent to Oanda
+  const outboundJson = d.broker_request ? fmtJson(d.broker_request) : null
+
+  const hasDetail = inboundJson || outboundJson || d.error_detail
 
   return (
     <div>
-      {/* Summary row — clickable */}
+      {/* Summary row */}
       <div
         className="px-5 py-3 flex items-center gap-4 cursor-pointer hover:bg-base-800/40 transition-colors select-none"
         onClick={() => setExpanded(v => !v)}
       >
-        {/* Expand toggle */}
         <span className="text-base-600 text-xs font-mono w-3 flex-shrink-0">
           {expanded ? '▼' : '▶'}
         </span>
-
-        {/* Time */}
         <span className="font-mono text-xs text-base-400 w-20 flex-shrink-0">
           {new Date(d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </span>
-
-        {/* Outcome */}
         <StatusBadge status={d.outcome} />
-
-        {/* HTTP status */}
         <span className="font-mono text-xs text-base-400 w-8">{d.http_status}</span>
-
-        {/* Duration */}
         <span className="font-mono text-xs text-base-500 w-16">
           {d.duration_ms ? `${d.duration_ms.toFixed(0)}ms` : '—'}
         </span>
-
-        {/* IP */}
         <span className="font-mono text-xs text-base-500 flex-1">{d.source_ip || '—'}</span>
-
-        {/* Error summary */}
         {d.error_detail && (
           <span className="text-xs text-loss font-mono truncate max-w-xs">
-            {d.error_detail.slice(0, 50)}{d.error_detail.length > 50 ? '…' : ''}
+            {d.error_detail.slice(0, 60)}{d.error_detail.length > 60 ? '…' : ''}
           </span>
         )}
-
-        {/* Auth badge */}
         <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0 ${
           d.auth_passed ? 'bg-accent/10 text-accent' : 'bg-loss/10 text-loss'
         }`}>
@@ -211,108 +197,83 @@ function DeliveryRow({ delivery: d }) {
         </span>
       </div>
 
-      {/* Expanded detail panel */}
+      {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-base-800 bg-base-900/60 px-5 py-4 space-y-4 animate-fade-in">
 
-          {/* Headers section */}
-          <div>
-            <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-2">
-              Received headers
-            </div>
-            <div className="bg-base-950 border border-base-800 rounded-md p-3 space-y-1.5">
-              <HeaderRow label="X-Webhook-Secret" value={d.auth_passed ? '••••••••••••••••' : '(missing or invalid)'} />
-              <HeaderRow label="User-Agent" value={d.user_agent || '—'} />
-              <HeaderRow label="Source IP" value={d.source_ip || '—'} />
-              <HeaderRow label="Auth result" value={d.auth_passed ? '✓ passed' : '✗ failed'} highlight={d.auth_passed ? 'green' : 'red'} />
-            </div>
-          </div>
-
-          {/* Payload section */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider">
-                Raw payload
-              </div>
-              {d.raw_payload && (
-                <CopyButton value={d.raw_payload} label="Copy" />
-              )}
-            </div>
-            {!d.raw_payload ? (
-              <p className="text-xs text-base-600 italic">No payload captured</p>
-            ) : parseError ? (
-              <pre className="bg-base-950 border border-base-800 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto whitespace-pre-wrap break-all">
-                {parseError}
-              </pre>
-            ) : (
-              <pre className="bg-base-950 border border-base-800 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto">
-                {JSON.stringify(parsedPayload, null, 2)}
-              </pre>
+          {/* Request metadata */}
+          <div className="bg-base-950 border border-base-800 rounded-md p-3 space-y-1.5">
+            <HeaderRow label="Source IP"    value={d.source_ip || '—'} />
+            <HeaderRow label="User-Agent"   value={d.user_agent || '—'} />
+            <HeaderRow label="Auth"         value={d.auth_passed ? '✓ passed' : '✗ failed'} highlight={d.auth_passed ? 'green' : 'red'} />
+            {d.order_id && (
+              <HeaderRow label="Order"
+                value={<a href="/orders" className="text-accent hover:underline font-mono">#{d.order_id}</a>}
+              />
             )}
           </div>
 
-          {/* Error detail if present */}
+          {/* Error detail */}
           {d.error_detail && (
             <div>
-              <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-2">
-                Error detail
-              </div>
+              <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-2">Error</div>
               <pre className="bg-base-950 border border-loss/20 rounded-md p-3 text-xs font-mono text-loss overflow-x-auto whitespace-pre-wrap">
                 {d.error_detail}
               </pre>
             </div>
           )}
 
-          {/* Broker request body for failed orders */}
-          {d.order_id && d.outcome !== 'success' && (
-            <BrokerRequestDetail orderId={d.order_id} />
-          )}
+          {/* Side-by-side JSON panels */}
+          {(inboundJson || outboundJson) && (
+            <div className="grid grid-cols-2 gap-3">
+              {/* Left: what TradingView sent */}
+              <div className="min-w-0">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider">
+                    ← Received from TradingView
+                  </div>
+                  {inboundJson && <CopyButton value={inboundJson} label="Copy" />}
+                </div>
+                {inboundJson ? (
+                  <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto overflow-y-auto whitespace-pre h-64">
+                    {inboundJson}
+                  </pre>
+                ) : (
+                  <div className="bg-base-950 border border-base-800 rounded-md p-3 h-64 flex items-center justify-center">
+                    <span className="text-xs text-base-600 italic">No payload captured</span>
+                  </div>
+                )}
+              </div>
 
-          {/* Order link if created */}
-          {d.order_id && (
-            <div className="text-xs text-base-400">
-              Order created: <a href="/orders" className="text-accent hover:underline font-mono">#{d.order_id}</a>
+              {/* Right: what the relay sent to Oanda */}
+              <div className="min-w-0">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider">
+                    → Sent to broker
+                  </div>
+                  {outboundJson && <CopyButton value={outboundJson} label="Copy" />}
+                </div>
+                {outboundJson ? (
+                  <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto overflow-y-auto whitespace-pre h-64">
+                    {outboundJson}
+                  </pre>
+                ) : (
+                  <div className="bg-base-950 border border-base-800 rounded-md p-3 h-64 flex items-center justify-center">
+                    <span className="text-xs text-base-600 italic">
+                      {d.auth_passed ? 'No broker request recorded' : 'Auth failed — no order created'}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+
         </div>
       )}
     </div>
   )
 }
 
-function BrokerRequestDetail({ orderId }) {
-  const [request, setRequest] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    ordersApi.list({ limit: 100 })
-      .then(data => {
-        const order = data?.find(o => o.id === orderId)
-        if (order?.broker_request) {
-          try {
-            setRequest(JSON.stringify(JSON.parse(order.broker_request), null, 2))
-          } catch {
-            setRequest(order.broker_request)
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [orderId])
-
-  if (loading || !request) return null
-
-  return (
-    <div>
-      <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-2">
-        Broker request body
-      </div>
-      <pre className="bg-base-950 border border-base-700 rounded-md p-3 text-xs font-mono text-base-300 overflow-x-auto whitespace-pre-wrap">
-        {request}
-      </pre>
-    </div>
-  )
-}
 
 function HeaderRow({ label, value, highlight }) {
   const valueColor = highlight === 'green' ? 'text-accent'

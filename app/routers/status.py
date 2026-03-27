@@ -167,9 +167,10 @@ class DeliveryOut(BaseModel):
     duration_ms: float | None
     raw_payload: str | None
     user_agent: str | None = None
+    broker_request: str | None = None   # outbound JSON sent to broker (from joined order row)
 
     class Config:
-        from_attributes = True
+        from_attributes = False  # manual construction — not direct ORM mapping
 
 
 @router.get("/webhook-deliveries", response_model=list[DeliveryOut])
@@ -182,8 +183,10 @@ async def list_webhook_deliveries(
 ):
     """Recent webhook delivery log — useful for debugging TradingView alerts."""
     from app.models.webhook_delivery import WebhookDelivery
+    from sqlalchemy.orm import outerjoin
     stmt = (
-        select(WebhookDelivery)
+        select(WebhookDelivery, Order.broker_request)
+        .outerjoin(Order, Order.id == WebhookDelivery.order_id)
         .where(WebhookDelivery.tenant_id == tenant.id)
         .order_by(desc(WebhookDelivery.created_at))
         .limit(limit)
@@ -192,7 +195,24 @@ async def list_webhook_deliveries(
     if outcome:
         stmt = stmt.where(WebhookDelivery.outcome == outcome)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    rows = result.all()
+    return [
+        DeliveryOut(
+            id=d.id,
+            created_at=d.created_at,
+            source_ip=d.source_ip,
+            outcome=d.outcome,
+            http_status=d.http_status,
+            auth_passed=d.auth_passed,
+            order_id=d.order_id,
+            error_detail=d.error_detail,
+            duration_ms=d.duration_ms,
+            raw_payload=d.raw_payload,
+            user_agent=d.user_agent,
+            broker_request=broker_request,
+        )
+        for d, broker_request in rows
+    ]
 
 
 # ── Position Sync ──────────────────────────────────────────────────────────────

@@ -151,7 +151,9 @@ class OandaBroker(BrokerBase):
         if order.action == OrderAction.CLOSE:
             return await self._close_position(account_id, order.symbol)
 
+        import json as _json
         body = self._build_order_body(order)
+        body_str = _json.dumps(body, default=str)
         async with httpx.AsyncClient(headers=self.headers, timeout=15.0) as client:
             try:
                 resp = await client.post(f"{self.base_url}/accounts/{account_id}/orders", json=body)
@@ -172,10 +174,12 @@ class OandaBroker(BrokerBase):
                         filled_quantity=abs(float(fill_tx.get("units", order.quantity))),
                         avg_fill_price=float(fill_price) if fill_price else None,
                         client_trade_id=client_trade_id,
+                        broker_request=body_str,
                     )
                 elif "orderCancelTransaction" in data:
                     reason = data["orderCancelTransaction"].get("reason", "CANCELLED")
-                    return BrokerOrderResult(success=False, error_message=f"Order cancelled by Oanda: {reason}")
+                    return BrokerOrderResult(success=False, error_message=f"Order cancelled by Oanda: {reason}",
+                                            broker_request=body_str)
                 elif "orderCreateTransaction" in data:
                     create_tx = data["orderCreateTransaction"]
                     return BrokerOrderResult(
@@ -183,26 +187,25 @@ class OandaBroker(BrokerBase):
                         broker_order_id=self._extract_order_id(create_tx),
                         filled_quantity=0.0,
                         order_open=True,
+                        broker_request=body_str,
                     )
                 else:
                     logger.error(f"Unexpected Oanda response: {data}")
-                    return BrokerOrderResult(success=False, error_message=str(data))
+                    return BrokerOrderResult(success=False, error_message=str(data), broker_request=body_str)
             except httpx.HTTPStatusError as e:
                 logger.error(f"Oanda order error {e.response.status_code}: {e.response.text}")
-                import json as _json
                 return BrokerOrderResult(
                     success=False,
                     error_message=e.response.text,
-                    broker_request=_json.dumps(body, default=str),
+                    broker_request=body_str,
                     broker_response=e.response.text,
                 )
             except Exception as e:
                 logger.exception("Unexpected error submitting to Oanda")
-                import json as _json
                 return BrokerOrderResult(
                     success=False,
                     error_message=str(e),
-                    broker_request=_json.dumps(body, default=str),
+                    broker_request=body_str,
                 )
 
     async def cancel_replace_order(self, broker_order_id: str, account: str, new_order: Order) -> BrokerOrderResult:
