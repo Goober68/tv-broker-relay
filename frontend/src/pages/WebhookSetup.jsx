@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '../lib/auth-context'
 import { apiKeys as apiKeysApi, orders as ordersApi } from '../lib/api'
-import { useApi } from '../hooks/useApi'
+import { useApi, usePolling } from '../hooks/useApi'
 import { PageSpinner, SectionHeader, StatusBadge, CopyButton, Alert, EmptyState } from '../components/ui'
 
 export default function WebhookSetupPage() {
@@ -10,8 +10,9 @@ export default function WebhookSetupPage() {
   const PAGE_SIZE = 25
 
   const { data: keys, loading: keysLoading } = useApi(() => apiKeysApi.list())
-  const { data: deliveries, loading: dlLoading, refetch } = useApi(
+  const { data: deliveries, loading: dlLoading, refetch } = usePolling(
     () => ordersApi.deliveries({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+    10_000,
     [page]
   )
 
