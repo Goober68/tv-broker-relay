@@ -27,9 +27,6 @@ config = context.config
 # Override sqlalchemy.url from environment (takes precedence over alembic.ini)
 database_url = os.environ.get("DATABASE_URL", "")
 # Alembic needs psycopg2 (sync) driver for migrations, not asyncpg
-# Convert asyncpg URL to psycopg2 for migration runner
-if database_url.startswith("postgresql+asyncpg://"):
-    database_url = database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
