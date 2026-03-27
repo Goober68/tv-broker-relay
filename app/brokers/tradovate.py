@@ -175,6 +175,7 @@ class TradovateBroker(BrokerBase):
                        or order.take_profit is not None
                        or has_trail)
 
+        import json as _json
         if has_trail:
             # Trailing stop — use /orderStrategy/startOrderStrategy with params JSON
             # IMPORTANT: startOrderStrategy bracket values are RELATIVE offsets from
@@ -256,7 +257,6 @@ class TradovateBroker(BrokerBase):
             body = base_body
             endpoint = "/order/placeOrder"
 
-        import json as _json
         body_str = _json.dumps(body, default=str)
         async with httpx.AsyncClient(headers=self._headers(token), timeout=15.0) as client:
             try:
