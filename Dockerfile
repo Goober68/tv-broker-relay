@@ -4,8 +4,7 @@ WORKDIR /frontend
 COPY frontend/package.json ./
 RUN npm install --frozen-lockfile && chmod -R +x node_modules/.bin
 COPY frontend/ ./
-# RUN npm run build
-RUN node node_modules/vite/bin/vite.js build --outDir /frontend/dist
+RUN npm run build
 # Output lands in /frontend/../app/static (via vite.config.js outDir: '../app/static')
 # But since we're in /frontend, outDir resolves to /app/static — we'll copy below.
 
@@ -32,4 +31,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "2", "--log-level", "info", "--access-log"]
+     "--workers", "1", "--log-level", "info", "--access-log"]
