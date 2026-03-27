@@ -264,7 +264,7 @@ function OrderRow({ order }) {
       <div className="flex-1 min-w-0">
         <div className="text-sm font-mono text-base-100">{order.symbol}</div>
         <div className="text-xs text-base-400">
-          {order.broker} · {new Date(order.created_at).toLocaleTimeString()}
+          {order.broker} · {order.account} · {new Date(order.created_at).toLocaleTimeString()}
         </div>
       </div>
       <div className="text-right flex items-center gap-2">

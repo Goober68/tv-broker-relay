@@ -78,7 +78,7 @@ export default function OrdersPage() {
                   <th>Broker Qty</th>
                   <th>Price</th>
                   <th>Fill price</th>
-                  <th>Broker</th>
+                  <th>Broker / Account</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -160,6 +160,7 @@ function OrderRow({ order }) {
         </td>
         <td>
           <span className="text-xs text-base-400">{order.broker}</span>
+          <div className="text-[10px] font-mono text-base-600">{order.account}</div>
         </td>
         <td><StatusBadge status={order.status} /></td>
       </tr>
