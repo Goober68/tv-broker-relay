@@ -1,12 +1,11 @@
 # ── Frontend build stage ───────────────────────────────────────────────────────
 FROM node:20-alpine AS frontend-builder
 WORKDIR /frontend
-COPY frontend/package.json ./
-RUN npm install --frozen-lockfile && chmod -R +x node_modules/.bin
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install && chmod -R +x node_modules/.bin
 COPY frontend/ ./
 RUN npm run build
-# Output lands in /frontend/../app/static (via vite.config.js outDir: '../app/static')
-# But since we're in /frontend, outDir resolves to /app/static — we'll copy below.
+# Output lands in /frontend/dist (vite.config.js outDir: 'dist')
 
 # ── Python build stage ─────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
