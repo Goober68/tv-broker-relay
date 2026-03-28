@@ -5,8 +5,9 @@ import { useAuth } from '../lib/auth-context'
 
 const NAV_ITEMS = [
   { to: '/dashboard',     label: 'Dashboard',       icon: <GridIcon /> },
+  { to: '/daily-pnl',    label: 'Daily P&L',        icon: <PnlIcon /> },
   { to: '/orders',        label: 'Orders',           icon: <ListIcon /> },
-  { to: '/broker-accounts', label: 'Brokers',        icon: <LinkIcon /> },
+  { to: '/broker-accounts', label: 'Accounts',        icon: <LinkIcon /> },
   { to: '/api-keys',      label: 'API Keys',         icon: <KeyIcon /> },
   { to: '/webhook-setup', label: 'Webhook Setup',    icon: <WebhookIcon /> },
   { to: '/billing',       label: 'Billing',          icon: <CreditIcon /> },
@@ -132,6 +133,9 @@ function UsersIcon() {
 }
 function ChartIcon() {
   return <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="9" width="3" height="5" rx="0.5"/><rect x="6" y="5" width="3" height="9" rx="0.5"/><rect x="11" y="2" width="3" height="12" rx="0.5"/></svg>
+}
+function PnlIcon() {
+  return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12l3-4 3 2 4-6"/><path d="M10 4h4v4"/></svg>
 }
 function LogoutIcon() {
   return <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 3h3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-3"/><path d="m7 11 3-3-3-3"/><path d="M10 8H2"/></svg>

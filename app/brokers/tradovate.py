@@ -53,10 +53,10 @@ class TradovateBroker(BrokerBase):
 
     @classmethod
     def from_credentials(cls, creds: dict) -> "TradovateBroker":
-        return cls(
-            username       = creds["username"],
-            password       = creds["password"],
-            app_id         = creds["app_id"],
+        instance = cls(
+            username       = creds.get("username", ""),
+            password       = creds.get("password", ""),
+            app_id         = creds.get("app_id", ""),
             app_version    = creds.get("app_version", "1.0"),
             base_url       = creds.get("base_url", "https://live.tradovateapi.com/v1"),
             device_id      = creds.get("device_id", ""),
@@ -64,6 +64,11 @@ class TradovateBroker(BrokerBase):
             sec            = creds.get("sec", ""),
             instrument_map = creds.get("instrument_map"),
         )
+        # OAuth flow — pre-set the access token, skip password auth
+        if creds.get("auth_method") == "oauth" and creds.get("access_token"):
+            instance._access_token = creds["access_token"]
+            instance._token_expiry = datetime.now(timezone.utc) + timedelta(minutes=80)
+        return instance
 
     @classmethod
     def from_settings(cls) -> "TradovateBroker":

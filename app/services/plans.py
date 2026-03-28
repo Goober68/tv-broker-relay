@@ -37,7 +37,7 @@ PLAN_DEFINITIONS = [
         "name": "pro",
         "display_name": "Pro",
         "stripe_price_id": None,  # set from env / admin UI
-        "max_broker_accounts": 4,
+        "max_broker_accounts": 8,
         "max_monthly_orders": 2_000,
         "max_open_orders": 50,
         "requests_per_minute": 60,

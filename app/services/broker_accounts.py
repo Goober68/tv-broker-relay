@@ -11,6 +11,14 @@ logger = logging.getLogger(__name__)
 
 def _validate_credentials(broker: str, creds: dict) -> None:
     """Raise ValueError if required fields are missing for the given broker."""
+    # OAuth flow — only need access_token and base_url
+    if broker == "tradovate" and creds.get("auth_method") == "oauth":
+        if not creds.get("access_token"):
+            raise ValueError("Missing access_token for Tradovate OAuth credentials")
+        if not creds.get("base_url"):
+            raise ValueError("Missing base_url for Tradovate OAuth credentials")
+        return
+
     required = BROKER_CREDENTIAL_FIELDS.get(broker)
     if required is None:
         raise ValueError(f"Unknown broker: {broker!r}")
@@ -26,6 +34,10 @@ async def create_broker_account(
     account_alias: str,
     credentials: dict,
     display_name: str | None = None,
+    auto_close_enabled: bool = False,
+    auto_close_time: str | None = None,
+    fifo_randomize: bool = False,
+    fifo_max_offset: int = 3,
 ) -> BrokerAccount:
     _validate_credentials(broker, credentials)
 
@@ -49,6 +61,10 @@ async def create_broker_account(
         account_alias=account_alias,
         display_name=display_name,
         credentials_encrypted=encrypt_credentials(credentials),
+        auto_close_enabled=auto_close_enabled,
+        auto_close_time=auto_close_time if auto_close_enabled else None,
+        fifo_randomize=fifo_randomize,
+        fifo_max_offset=fifo_max_offset,
     )
     db.add(account)
     await db.flush()
@@ -110,7 +126,7 @@ def safe_credential_summary(broker: str, credentials: dict) -> dict:
     Return a redacted view of credentials safe to show in API responses.
     Masks all values except the last 4 chars and the base_url / account_id.
     """
-    visible_fields = {"base_url", "account_id", "app_version", "app_id"}
+    visible_fields = {"base_url", "account_id", "app_version", "app_id", "prop_firm"}
     summary = {}
     for k, v in credentials.items():
         if k in visible_fields:

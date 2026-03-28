@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { pnl as pnlApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
-import { PageSpinner, SectionHeader, EmptyState } from '../components/ui'
+import { PageSpinner, SectionHeader, EmptyState, brokerLabel } from '../components/ui'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, Cell, Legend,
@@ -128,10 +128,10 @@ function AccountPnlCard({ account, period, view }) {
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-medium text-base-100">
-              {account.display_name || `${account.broker} / ${account.account}`}
+              {account.display_name || `${brokerLabel(account.broker)} / ${account.account}`}
             </div>
             <div className="text-xs text-base-500 font-mono mt-0.5">
-              {account.broker} · {account.account}
+              {brokerLabel(account.broker)} · {account.account}
             </div>
           </div>
           <div className="text-right">

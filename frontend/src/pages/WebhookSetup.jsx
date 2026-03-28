@@ -111,7 +111,7 @@ export default function WebhookSetupPage() {
                 ›
               </button>
             </div>
-            <button onClick={() => { setPage(0); refetch() }} className="text-xs text-base-400 hover:text-base-200">↻</button>
+            <button onClick={() => { setInspecting(null); setPage(0); refetch() }} className="text-xs text-base-400 hover:text-base-200">↻</button>
           </div>
         </div>
         {dlLoading ? (

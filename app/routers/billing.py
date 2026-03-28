@@ -29,7 +29,7 @@ from app.services.stripe_service import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/billing", tags=["billing"])
+router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────

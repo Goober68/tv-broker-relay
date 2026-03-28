@@ -8,7 +8,7 @@ from app.models.tenant import Tenant
 from app.dependencies.auth import get_current_tenant
 from app.services.api_keys import create_api_key, list_api_keys, revoke_api_key
 
-router = APIRouter(prefix="/api-keys", tags=["api-keys"])
+router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
 
 MAX_KEYS_PER_TENANT = 10  # reasonable ceiling; plan enforcement comes in Step 4
 

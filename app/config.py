@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     tradovate_app_id: str = ""
     tradovate_app_version: str = "1.0"
     tradovate_base_url: str = "https://demo.tradovateapi.com/v1"
+
+    # Tradovate OAuth
+    tradovate_oauth_client_id: str = ""
+    tradovate_oauth_client_secret: str = ""
+    tradovate_oauth_redirect_uri: str = ""
     etrade_consumer_key: str = ""
     etrade_consumer_secret: str = ""
     etrade_oauth_token: str = ""

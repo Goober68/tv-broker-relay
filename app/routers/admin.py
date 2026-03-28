@@ -17,7 +17,7 @@ from app.models.plan import Plan, Subscription
 from app.dependencies.auth import require_admin
 from app.services.plans import assign_plan, seed_plans, get_plan_by_name
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────

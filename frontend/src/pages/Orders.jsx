@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { orders as ordersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
 import {
-  PageSpinner, SectionHeader, StatusBadge, Mono, EmptyState
+  PageSpinner, SectionHeader, StatusBadge, Mono, EmptyState, brokerLabel
 } from '../components/ui'
 
 const BROKERS  = ['', 'oanda', 'ibkr', 'tradovate', 'etrade']
@@ -43,7 +43,7 @@ export default function OrdersPage() {
         >
           <option value="">All brokers</option>
           {BROKERS.filter(Boolean).map(b => (
-            <option key={b} value={b}>{b}</option>
+            <option key={b} value={b}>{brokerLabel(b)}</option>
           ))}
         </select>
         <select
@@ -159,7 +159,7 @@ function OrderRow({ order }) {
           </Mono>
         </td>
         <td>
-          <span className="text-xs text-base-400">{order.broker}</span>
+          <span className="text-xs text-base-400">{brokerLabel(order.broker)}</span>
           <div className="text-[10px] font-mono text-base-600">{order.account}</div>
         </td>
         <td><StatusBadge status={order.status} /></td>

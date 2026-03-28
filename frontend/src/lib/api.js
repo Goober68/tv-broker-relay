@@ -65,7 +65,7 @@ async function request(path, options = {}, retry = true) {
 async function attemptRefresh() {
   // Deduplicate concurrent refresh calls
   if (refreshPromise) return refreshPromise
-  refreshPromise = fetch('/auth/refresh', { method: 'POST', credentials: 'include' })
+  refreshPromise = fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
     .then(async (res) => {
       if (!res.ok) return false
       const data = await res.json()
@@ -99,60 +99,64 @@ const api = {
 
 export const auth = {
   register: (email, password) =>
-    api.post('/auth/register', { email, password }),
+    api.post('/api/auth/register', { email, password }),
 
   login: async (email, password) => {
-    const data = await api.post('/auth/login', { email, password })
+    const data = await api.post('/api/auth/login', { email, password })
     setAccessToken(data.access_token)
     return data
   },
 
   logout: async () => {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
     clearAccessToken()
   },
 
-  logoutAll: () => api.post('/auth/logout-all'),
+  logoutAll: () => api.post('/api/auth/logout-all'),
 
-  me: () => api.get('/auth/me'),
+  me: () => api.get('/api/auth/me'),
 
   refresh: () => attemptRefresh(),
 
   changePassword: (email, password) =>
-    api.put('/auth/me/password', { email, password }),
+    api.put('/api/auth/me/password', { email, password }),
 }
 
 // ── Billing ────────────────────────────────────────────────────────────────────
 
 export const billing = {
-  subscription: () => api.get('/billing/subscription'),
-  plans:        () => api.get('/billing/plans'),
-  checkout:     (plan_name) => api.post('/billing/checkout', { plan_name }),
-  portal:       () => api.post('/billing/portal'),
+  subscription: () => api.get('/api/billing/subscription'),
+  plans:        () => api.get('/api/billing/plans'),
+  checkout:     (plan_name) => api.post('/api/billing/checkout', { plan_name }),
+  portal:       () => api.post('/api/billing/portal'),
 }
 
 // ── API Keys ───────────────────────────────────────────────────────────────────
 
 export const apiKeys = {
-  list:   ()           => api.get('/api-keys'),
-  create: (name)       => api.post('/api-keys', { name }),
-  revoke: (id)         => api.delete(`/api-keys/${id}`),
+  list:   ()           => api.get('/api/api-keys'),
+  create: (name)       => api.post('/api/api-keys', { name }),
+  revoke: (id)         => api.delete(`/api/api-keys/${id}`),
 }
 
 // ── Broker Accounts ────────────────────────────────────────────────────────────
 
 export const brokerAccounts = {
-  list:   ()                     => api.get('/broker-accounts'),
-  get:    (id)                   => api.get(`/broker-accounts/${id}`),
-  create: (body)                 => api.post('/broker-accounts', body),
-  update: (id, body)             => api.patch(`/broker-accounts/${id}`, body),
-  delete: (id)                   => api.delete(`/broker-accounts/${id}`),
-  fields: (broker)               => api.get(`/broker-accounts/fields/${broker}`),
-  instruments:     (id)          => api.get(`/broker-accounts/${id}/instruments`),
-  upsertInstrument:(id, sym, body)=> api.put(`/broker-accounts/${id}/instruments/${sym}`, body),
-  deleteInstrument:(id, sym)     => api.delete(`/broker-accounts/${id}/instruments/${sym}`),
-  updateAutoClose: (id, body)    => api.patch(`/broker-accounts/${id}/auto-close`, body),
-  updateFifo:      (id, body)    => api.patch(`/broker-accounts/${id}/fifo`, body),
+  list:   ()                     => api.get('/api/broker-accounts'),
+  get:    (id)                   => api.get(`/api/broker-accounts/${id}`),
+  create: (body)                 => api.post('/api/broker-accounts', body),
+  update: (id, body)             => api.patch(`/api/broker-accounts/${id}`, body),
+  delete: (id)                   => api.delete(`/api/broker-accounts/${id}`),
+  fields: (broker)               => api.get(`/api/broker-accounts/fields/${broker}`),
+  instruments:     (id)          => api.get(`/api/broker-accounts/${id}/instruments`),
+  upsertInstrument:(id, sym, body)=> api.put(`/api/broker-accounts/${id}/instruments/${sym}`, body),
+  deleteInstrument:(id, sym)     => api.delete(`/api/broker-accounts/${id}/instruments/${sym}`),
+  updateDisplayName:(id, name)    => api.patch(`/api/broker-accounts/${id}/display-name`, { display_name: name }),
+  updateAutoClose: (id, body)    => api.patch(`/api/broker-accounts/${id}/auto-close`, body),
+  updateFifo:      (id, body)    => api.patch(`/api/broker-accounts/${id}/fifo`, body),
+  tradovateFetchAccounts: (creds) => api.post('/api/broker-accounts/tradovate/fetch-accounts', { credentials: creds }),
+  tradovateOAuthUrl:      (env = 'live') => api.get(`/api/broker-accounts/tradovate/oauth-url?env=${env}`),
+  tradovateBulkCreate:    (creds, accounts) => api.post('/api/broker-accounts/tradovate/bulk-create', { credentials: creds, accounts }),
 }
 
 // ── Orders & Positions ─────────────────────────────────────────────────────────
@@ -174,13 +178,13 @@ export const positions = {
 // ── Admin ──────────────────────────────────────────────────────────────────────
 
 export const admin = {
-  tenants:     (params = {})        => api.get('/admin/tenants?' + new URLSearchParams(params)),
-  tenant:      (id)                 => api.get(`/admin/tenants/${id}`),
-  assignPlan:  (id, plan_name)      => api.post(`/admin/tenants/${id}/plan`, { plan_name }),
-  setActive:   (id, is_active)      => api.patch(`/admin/tenants/${id}/active?is_active=${is_active}`),
-  stats:       ()                   => api.get('/admin/stats'),
-  plans:       ()                   => api.get('/admin/plans'),
-  setPrice:    (id, stripe_price_id)=> api.patch(`/admin/plans/${id}/stripe-price?stripe_price_id=${stripe_price_id}`),
+  tenants:     (params = {})        => api.get('/api/admin/tenants?' + new URLSearchParams(params)),
+  tenant:      (id)                 => api.get(`/api/admin/tenants/${id}`),
+  assignPlan:  (id, plan_name)      => api.post(`/api/admin/tenants/${id}/plan`, { plan_name }),
+  setActive:   (id, is_active)      => api.patch(`/api/admin/tenants/${id}/active?is_active=${is_active}`),
+  stats:       ()                   => api.get('/api/admin/stats'),
+  plans:       ()                   => api.get('/api/admin/plans'),
+  setPrice:    (id, stripe_price_id)=> api.patch(`/api/admin/plans/${id}/stripe-price?stripe_price_id=${stripe_price_id}`),
 }
 
 export default api

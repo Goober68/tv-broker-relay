@@ -13,6 +13,7 @@ import WebhookSetupPage from './pages/WebhookSetup'
 import BillingPage from './pages/Billing'
 import AdminTenantsPage from './pages/AdminTenants'
 import AdminStatsPage from './pages/AdminStats'
+import DailyPnlPage from './pages/DailyPnl'
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
           {/* Protected app routes */}
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route path="/dashboard"       element={<DashboardPage />} />
+            <Route path="/daily-pnl"       element={<DailyPnlPage />} />
             <Route path="/orders"          element={<OrdersPage />} />
             <Route path="/broker-accounts" element={<BrokerAccountsPage />} />
             <Route path="/api-keys"        element={<ApiKeysPage />} />

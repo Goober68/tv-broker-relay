@@ -3,7 +3,7 @@ import { positions, orders, billing } from '../lib/api'
 import { usePolling, useApi } from '../hooks/useApi'
 import {
   PageSpinner, StatCard, PnlValue, StatusBadge,
-  Mono, EmptyState, SectionHeader
+  Mono, EmptyState, SectionHeader, brokerLabel
 } from '../components/ui'
 import { clsx } from 'clsx'
 import PnlCharts from '../components/PnlCharts'
@@ -188,7 +188,7 @@ function PositionRow({ pos }) {
               </span>
             )}
           </div>
-          <div className="text-xs text-base-400 mt-0.5">{pos.broker} · {pos.account}</div>
+          <div className="text-xs text-base-400 mt-0.5">{brokerLabel(pos.broker)} · {pos.account}</div>
         </div>
         <div className="text-right">
           <Mono className="text-base-100">{absQty.toLocaleString()}</Mono>
@@ -264,7 +264,7 @@ function OrderRow({ order }) {
       <div className="flex-1 min-w-0">
         <div className="text-sm font-mono text-base-100">{order.symbol}</div>
         <div className="text-xs text-base-400">
-          {order.broker} · {order.account} · {new Date(order.created_at).toLocaleTimeString()}
+          {brokerLabel(order.broker)} · {order.account} · {new Date(order.created_at).toLocaleTimeString()}
         </div>
       </div>
       <div className="text-right flex items-center gap-2">

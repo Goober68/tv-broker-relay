@@ -20,11 +20,11 @@ from app.services.auth import (
 )
 from app.dependencies.auth import get_current_tenant
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # Refresh token is sent as an HttpOnly cookie — never in the response body.
 REFRESH_COOKIE = "refresh_token"
-COOKIE_OPTS = dict(httponly=True, secure=True, samesite="lax", path="/auth")
+COOKIE_OPTS = dict(httponly=True, secure=True, samesite="lax", path="/api/auth")
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ def _set_refresh_cookie(response: JSONResponse, raw_token: str) -> None:
 
 
 def _clear_refresh_cookie(response: JSONResponse) -> None:
-    response.delete_cookie(REFRESH_COOKIE, path="/auth")
+    response.delete_cookie(REFRESH_COOKIE, path="/api/auth")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────

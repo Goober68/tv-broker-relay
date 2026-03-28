@@ -1,5 +1,17 @@
 import { clsx } from 'clsx'
 
+// ── Broker display names ──────────────────────────────────────────────────────
+
+const BROKER_DISPLAY = {
+  oanda: 'Oanda', ibkr: 'IBKR', tradovate: 'Tradovate',
+  etrade: 'E*Trade', rithmic: 'Rithmic', tradestation: 'TradeStation',
+  alpaca: 'Alpaca', tastytrade: 'Tastytrade',
+}
+
+export function brokerLabel(broker) {
+  return BROKER_DISPLAY[broker] || broker
+}
+
 // ── Spinner ────────────────────────────────────────────────────────────────────
 
 export function Spinner({ size = 'md', className }) {
