@@ -327,6 +327,8 @@ async def process_webhook(
         trail_trigger=levels.trail_trigger,
         trail_dist=levels.trail_dist,
         trail_update=levels.trail_update,
+        algo_id=payload.algo_id,
+        algo_version=payload.algo_version,
         comment=payload.comment,
         status=OrderStatus.PENDING,
         raw_payload=json.dumps(payload.model_dump(exclude={"secret"}, mode="json")),

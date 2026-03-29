@@ -109,9 +109,15 @@ async def tradovate_oauth_callback(
             f"/broker-accounts?oauth_error={urllib.parse.quote(str(e))}"
         )
 
+    # Extract refresh token for auto-renewal
+    refresh_token = token_data.get("refresh_token") or token_data.get("refreshToken")
+    expires_in = token_data.get("expires_in", 5400)  # default 90 min
+
     # Encrypt credentials for safe transport in URL
     encrypted_token = encrypt_credentials({
         "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_in": expires_in,
         "base_url": api_base,
         "auth_method": "oauth",
     })

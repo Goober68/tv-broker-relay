@@ -502,23 +502,17 @@ class AccountPnlSummary(BaseModel):
 
 @router.get("/pnl/summary", response_model=list[AccountPnlSummary])
 async def get_pnl_summary(
-    period: str = Query("daily", pattern="^(15min|daily|weekly)$"),
+    period: str = Query("daily", pattern="^(15min|daily|weekly|monthly|yearly)$"),
+    start: str | None = Query(None, description="Custom range start (ISO date, e.g. 2026-01-01)"),
+    end: str | None = Query(None, description="Custom range end (ISO date, e.g. 2026-03-28)"),
     tenant: Tenant = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Return P&L bucketed by time period for each active broker account.
 
-    period: "15min" | "daily" | "weekly"
-
-    Realized P&L is calculated from filled orders:
-        (avg_fill_price - avg_entry_price) * filled_quantity * multiplier
-    Since we track running position P&L in the positions table, we use
-    the daily_realized_pnl and realized_pnl fields which are updated on fills.
-
-    For simplicity, we aggregate filled order values directly from orders table
-    using the position state changes — each SELL/CLOSE reduces position and
-    generates realized P&L.
+    period: "15min" | "daily" | "weekly" | "monthly" | "yearly"
+    start/end: optional custom date range (overrides default lookback)
     """
     from datetime import timezone, timedelta
     from sqlalchemy import case, cast, Float
@@ -527,14 +521,28 @@ async def get_pnl_summary(
 
     # Determine lookback and truncation based on period
     if period == "15min":
-        lookback  = now - timedelta(hours=24)   # last 24 hours of 15min bars
+        lookback  = now - timedelta(hours=24)
         trunc_sql = "date_trunc('hour', created_at) + INTERVAL '15 min' * FLOOR(EXTRACT(MINUTE FROM created_at) / 15)"
     elif period == "daily":
         lookback  = now - timedelta(days=30)
         trunc_sql = "date_trunc('day', created_at)"
-    else:  # weekly
+    elif period == "weekly":
         lookback  = now - timedelta(weeks=12)
         trunc_sql = "date_trunc('week', created_at)"
+    elif period == "monthly":
+        lookback  = now - timedelta(days=365)
+        trunc_sql = "date_trunc('month', created_at)"
+    else:  # yearly
+        lookback  = now - timedelta(days=365 * 5)
+        trunc_sql = "date_trunc('year', created_at)"
+
+    # Custom date range overrides default lookback
+    if start:
+        try:
+            from datetime import date as date_type
+            lookback = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
 
     # Get active broker accounts for this tenant
     acct_result = await db.execute(
@@ -548,49 +556,108 @@ async def get_pnl_summary(
     summaries = []
 
     for acct in accounts:
-        # Query filled orders for this broker/account within lookback window
-        # P&L per order = avg_fill_price * filled_quantity * multiplier * direction
-        # direction: buy = negative cash flow (cost), sell/close = positive (proceeds)
-        # Net P&L accumulated in position — we use a simplified approach:
-        # For each filled order, calculate contribution as:
-        #   sell/close: +avg_fill_price * qty * multiplier
-        #   buy:        -avg_fill_price * qty * multiplier
-        # Summing these per period gives realized P&L change
-
+        # Fetch ALL filled orders for this account (not just within lookback)
+        # so FIFO matching is correct even when entry was before the lookback window.
         from sqlalchemy import text
+        from collections import deque
 
-        rows = await db.execute(
-            text(f"""
-                SELECT
-                    {trunc_sql} AS period_start,
-                    SUM(
-                        CASE
-                            WHEN action IN ('sell', 'close')
-                                THEN avg_fill_price * filled_quantity * multiplier
-                            ELSE
-                                -avg_fill_price * filled_quantity * multiplier
-                        END
-                    ) AS period_pnl,
-                    COUNT(*) AS order_count
+        all_fills = await db.execute(
+            text("""
+                SELECT created_at, LOWER(action) as action, avg_fill_price,
+                       filled_quantity, multiplier, symbol
                 FROM orders
                 WHERE tenant_id = :tenant_id
                   AND broker    = :broker
                   AND account   = :account
-                  AND status    = 'filled'
+                  AND LOWER(status) = 'filled'
                   AND avg_fill_price IS NOT NULL
                   AND filled_quantity > 0
-                  AND created_at >= :lookback
-                GROUP BY period_start
-                ORDER BY period_start ASC
+                ORDER BY created_at ASC
             """),
             {
                 "tenant_id": str(tenant.id),
                 "broker":    acct.broker,
                 "account":   acct.account_alias,
-                "lookback":  lookback,
             }
         )
-        raw_bars = rows.fetchall()
+        fills = all_fills.fetchall()
+
+        # FIFO matching per symbol: track open lots, compute realized P&L on closes
+        # realized_events = [(timestamp, pnl, symbol), ...]
+        realized_events = []
+        open_lots: dict[str, deque] = {}  # symbol → deque of (qty, price, multiplier)
+
+        for fill in fills:
+            ts = fill.created_at
+            action = fill.action
+            price = float(fill.avg_fill_price)
+            qty = float(fill.filled_quantity)
+            mult = float(fill.multiplier)
+            sym = fill.symbol
+
+            if sym not in open_lots:
+                open_lots[sym] = deque()
+            lots = open_lots[sym]
+
+            # Determine if this trade opens or closes
+            # Position direction: positive = long, negative = short
+            current_pos = sum(l[0] for l in lots)
+            signed_qty = qty if action == "buy" else -qty
+
+            # Same direction as current position (or opening from flat) → add lot
+            if current_pos == 0 or (current_pos > 0 and signed_qty > 0) or (current_pos < 0 and signed_qty < 0):
+                lots.append((signed_qty, price, mult))
+            else:
+                # Opposite direction → close lots FIFO
+                remaining = qty
+                while remaining > 0 and lots:
+                    lot_qty, lot_price, lot_mult = lots[0]
+                    lot_abs = abs(lot_qty)
+                    match_qty = min(remaining, lot_abs)
+
+                    # P&L = (exit - entry) * qty * multiplier * direction
+                    if lot_qty > 0:
+                        # Closing a long: sold at price, bought at lot_price
+                        pnl = (price - lot_price) * match_qty * lot_mult
+                    else:
+                        # Closing a short: bought at price, sold at lot_price
+                        pnl = (lot_price - price) * match_qty * lot_mult
+
+                    realized_events.append((ts, pnl))
+
+                    remaining -= match_qty
+                    if match_qty >= lot_abs:
+                        lots.popleft()
+                    else:
+                        # Partially consumed lot
+                        new_lot_qty = lot_qty + match_qty if lot_qty < 0 else lot_qty - match_qty
+                        lots[0] = (new_lot_qty, lot_price, lot_mult)
+
+                # If remaining > 0, this trade flipped the position — open new lot
+                if remaining > 0:
+                    lots.append((signed_qty / qty * remaining, price, mult))
+
+        # Bucket realized P&L events by period (only events within lookback)
+        period_pnl: dict[str, tuple[float, int]] = {}  # period_key → (pnl_sum, order_count)
+        for ts, pnl in realized_events:
+            if ts < lookback:
+                continue
+            # Truncate timestamp to period bucket
+            if period == "15min":
+                bucket = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
+            elif period == "daily":
+                bucket = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif period == "weekly":
+                # Truncate to Monday
+                bucket = (ts - timedelta(days=ts.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+            elif period == "monthly":
+                bucket = ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            else:  # yearly
+                bucket = ts.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            key = bucket.isoformat()
+            existing = period_pnl.get(key, (0.0, 0))
+            period_pnl[key] = (existing[0] + pnl, existing[1] + 1)
 
         # Get current unrealized P&L for this account from positions table
         pos_result = await db.execute(
@@ -607,16 +674,16 @@ async def get_pnl_summary(
         # Build bars with running cumulative
         bars = []
         cumulative = 0.0
-        for row in raw_bars:
-            period_pnl    = float(row.period_pnl or 0)
-            cumulative   += period_pnl
+        for key in sorted(period_pnl.keys()):
+            pnl_val, count = period_pnl[key]
+            cumulative += pnl_val
             bars.append(PnlBar(
-                period_start        = row.period_start,
-                realized_pnl        = period_pnl,
-                unrealized_pnl      = 0.0,   # unrealized is only current snapshot
-                cumulative_realized = cumulative,
-                cumulative_total    = cumulative + total_unrealized,
-                order_count         = int(row.order_count),
+                period_start        = datetime.fromisoformat(key),
+                realized_pnl        = round(pnl_val, 2),
+                unrealized_pnl      = 0.0,
+                cumulative_realized = round(cumulative, 2),
+                cumulative_total    = round(cumulative + total_unrealized, 2),
+                order_count         = count,
             ))
 
         # Append unrealized to the last bar if we have open positions

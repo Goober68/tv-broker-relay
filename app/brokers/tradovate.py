@@ -64,10 +64,14 @@ class TradovateBroker(BrokerBase):
             sec            = creds.get("sec", ""),
             instrument_map = creds.get("instrument_map"),
         )
-        # OAuth flow — pre-set the access token, skip password auth
+        # OAuth flow — pre-set the access token and refresh token
         if creds.get("auth_method") == "oauth" and creds.get("access_token"):
             instance._access_token = creds["access_token"]
             instance._token_expiry = datetime.now(timezone.utc) + timedelta(minutes=80)
+            instance._refresh_token = creds.get("refresh_token")
+            instance._auth_method = "oauth"
+            instance._oauth_creds = creds  # keep reference for persisting refreshed tokens
+            instance._broker_account_id = creds.get("_broker_account_id")
         return instance
 
     @classmethod
@@ -83,6 +87,11 @@ class TradovateBroker(BrokerBase):
     async def _ensure_authenticated(self) -> str:
         if self._access_token and self._token_expiry and datetime.now(timezone.utc) < self._token_expiry:
             return self._access_token
+
+        # OAuth accounts: use refresh token to get a new access token
+        if getattr(self, '_auth_method', None) == "oauth" and getattr(self, '_refresh_token', None):
+            return await self._refresh_oauth_token()
+
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{self.base_url}/auth/accesstokenrequest",
@@ -120,6 +129,85 @@ class TradovateBroker(BrokerBase):
                 except Exception:
                     logger.warning("Could not fetch Tradovate numeric account IDs")
                     self._account_id_map = {}
+
+            return self._access_token
+
+    async def _refresh_oauth_token(self) -> str:
+        """Use the refresh token to obtain a new access token."""
+        from app.config import get_settings
+        settings = get_settings()
+
+        # Determine token endpoint from base_url
+        if "demo" in self.base_url:
+            token_url = "https://demo.tradovateapi.com/auth/oauthtoken"
+        else:
+            token_url = "https://live.tradovateapi.com/auth/oauthtoken"
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                token_url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._refresh_token,
+                    "client_id": settings.tradovate_oauth_client_id,
+                    "client_secret": settings.tradovate_oauth_client_secret,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if "errorText" in data:
+                raise RuntimeError(f"Tradovate OAuth refresh failed: {data['errorText']}")
+
+            self._access_token = data.get("accessToken") or data.get("access_token")
+            if not self._access_token:
+                raise RuntimeError(f"No access token in refresh response: {list(data.keys())}")
+
+            # Update refresh token if a new one was issued
+            new_refresh = data.get("refresh_token") or data.get("refreshToken")
+            if new_refresh:
+                self._refresh_token = new_refresh
+
+            expires_in = data.get("expires_in", 5400)
+            self._token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 300)
+
+            logger.info(f"Tradovate OAuth token refreshed, expires in {expires_in}s")
+
+            # Persist refreshed tokens to DB so they survive restarts
+            if getattr(self, '_broker_account_id', None) and getattr(self, '_oauth_creds', None):
+                try:
+                    self._oauth_creds["access_token"] = self._access_token
+                    if new_refresh:
+                        self._oauth_creds["refresh_token"] = new_refresh
+                    from app.services.credentials import encrypt_credentials
+                    from app.models.db import AsyncSessionLocal as async_session_factory
+                    from app.models.broker_account import BrokerAccount
+                    async with async_session_factory() as session:
+                        from sqlalchemy import update
+                        await session.execute(
+                            update(BrokerAccount)
+                            .where(BrokerAccount.id == self._broker_account_id)
+                            .values(credentials_encrypted=encrypt_credentials(self._oauth_creds))
+                        )
+                        await session.commit()
+                    logger.info(f"Persisted refreshed OAuth token for BrokerAccount {self._broker_account_id}")
+                except Exception:
+                    logger.exception("Failed to persist refreshed OAuth token — will work until restart")
+
+            # Fetch account IDs if not yet loaded
+            if self._account_id is None:
+                try:
+                    acct_resp = await client.get(
+                        f"{self.base_url}/account/list",
+                        headers={"Authorization": f"Bearer {self._access_token}"},
+                    )
+                    acct_resp.raise_for_status()
+                    accounts = acct_resp.json()
+                    self._account_id_map = {a["name"]: a["id"] for a in accounts}
+                    if accounts:
+                        self._account_id = accounts[0]["id"]
+                except Exception:
+                    logger.warning("Could not fetch Tradovate account IDs after refresh")
 
             return self._access_token
 

@@ -57,6 +57,7 @@ async def get_broker_for_tenant(
     creds["fifo_randomize"]  = broker_account.fifo_randomize
     creds["fifo_max_offset"] = broker_account.fifo_max_offset
     creds["account_alias"]   = account_alias  # relay alias — used for stream manager lookup
+    creds["_broker_account_id"] = broker_account.id  # for persisting refreshed OAuth tokens
 
     match broker_name:
         case "oanda":

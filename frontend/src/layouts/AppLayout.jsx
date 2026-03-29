@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth-context'
 
 const NAV_ITEMS = [
   { to: '/dashboard',     label: 'Dashboard',       icon: <GridIcon /> },
-  { to: '/daily-pnl',    label: 'Daily P&L',        icon: <PnlIcon /> },
+  { to: '/pnl',           label: 'P&L',               icon: <PnlIcon /> },
   { to: '/orders',        label: 'Orders',           icon: <ListIcon /> },
   { to: '/broker-accounts', label: 'Accounts',        icon: <LinkIcon /> },
   { to: '/api-keys',      label: 'API Keys',         icon: <KeyIcon /> },
@@ -95,6 +95,10 @@ export default function AppLayout() {
             <span className="w-4 h-4"><LogoutIcon /></span>
             {loggingOut ? 'Logging out…' : 'Log out'}
           </button>
+          <div className="flex gap-3 mt-2 px-2">
+            <a href="/privacy" className="text-[10px] text-base-600 hover:text-base-400">Privacy</a>
+            <a href="/terms" className="text-[10px] text-base-600 hover:text-base-400">Terms</a>
+          </div>
         </div>
       </aside>
 

@@ -148,6 +148,10 @@ class Order(Base):
     filled_quantity: Mapped[float]       = mapped_column(Float, default=0.0)
     avg_fill_price:  Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Algo tracking
+    algo_id:       Mapped[str | None] = mapped_column(String(64), nullable=True)
+    algo_version:  Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     # Metadata
     raw_payload:   Mapped[str | None] = mapped_column(Text, nullable=True)
     comment:       Mapped[str | None] = mapped_column(String(256), nullable=True)

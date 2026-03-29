@@ -13,7 +13,9 @@ import WebhookSetupPage from './pages/WebhookSetup'
 import BillingPage from './pages/Billing'
 import AdminTenantsPage from './pages/AdminTenants'
 import AdminStatsPage from './pages/AdminStats'
-import DailyPnlPage from './pages/DailyPnl'
+import PnlPage from './pages/DailyPnl'
+import PrivacyPage from './pages/Privacy'
+import TermsPage from './pages/Terms'
 
 export default function App() {
   return (
@@ -29,7 +31,8 @@ export default function App() {
           {/* Protected app routes */}
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
             <Route path="/dashboard"       element={<DashboardPage />} />
-            <Route path="/daily-pnl"       element={<DailyPnlPage />} />
+            <Route path="/pnl"             element={<PnlPage />} />
+            <Route path="/daily-pnl"       element={<PnlPage />} /> {/* legacy redirect */}
             <Route path="/orders"          element={<OrdersPage />} />
             <Route path="/broker-accounts" element={<BrokerAccountsPage />} />
             <Route path="/api-keys"        element={<ApiKeysPage />} />
@@ -40,6 +43,10 @@ export default function App() {
             <Route path="/admin/tenants" element={<RequireAdmin><AdminTenantsPage /></RequireAdmin>} />
             <Route path="/admin/stats"   element={<RequireAdmin><AdminStatsPage /></RequireAdmin>} />
           </Route>
+
+          {/* Public pages (no auth required) */}
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms"   element={<TermsPage />} />
 
           {/* Root redirect */}
           <Route path="/"  element={<Navigate to="/dashboard" replace />} />

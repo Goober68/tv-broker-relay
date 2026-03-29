@@ -25,8 +25,9 @@ export function clearAccessToken() {
 // ── Core fetch wrapper ─────────────────────────────────────────────────────────
 
 async function request(path, options = {}, retry = true) {
+  const isFormData = options.body instanceof FormData
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...options.headers,
   }
   if (accessToken) {
@@ -152,6 +153,12 @@ export const brokerAccounts = {
   upsertInstrument:(id, sym, body)=> api.put(`/api/broker-accounts/${id}/instruments/${sym}`, body),
   deleteInstrument:(id, sym)     => api.delete(`/api/broker-accounts/${id}/instruments/${sym}`),
   updateDisplayName:(id, name)    => api.patch(`/api/broker-accounts/${id}/display-name`, { display_name: name }),
+  importHistory:    (id)          => api.post(`/api/broker-accounts/${id}/import-history`),
+  importCsv:        (id, file)    => {
+    const form = new FormData()
+    form.append('file', file)
+    return request(`/api/broker-accounts/${id}/import-csv`, { method: 'POST', body: form })
+  },
   updateAutoClose: (id, body)    => api.patch(`/api/broker-accounts/${id}/auto-close`, body),
   updateFifo:      (id, body)    => api.patch(`/api/broker-accounts/${id}/fifo`, body),
   tradovateFetchAccounts: (creds) => api.post('/api/broker-accounts/tradovate/fetch-accounts', { credentials: creds }),
@@ -168,7 +175,12 @@ export const orders = {
 }
 
 export const pnl = {
-  summary: (period = 'daily') => api.get(`/api/pnl/summary?period=${period}`),
+  summary: (period = 'daily', start, end) => {
+    const params = new URLSearchParams({ period })
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    return api.get(`/api/pnl/summary?${params}`)
+  },
 }
 
 export const positions = {

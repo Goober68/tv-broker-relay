@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+.prose-policy h2 {
+  @apply font-display font-semibold text-base-100 text-base mt-2 mb-2;
+}
+.prose-policy ul {
+  @apply list-disc list-inside space-y-1 ml-2;
+}
+.prose-policy a {
+  @apply text-accent hover:underline;
+}
+
 @layer base {
   * {
     scrollbar-width: thin;

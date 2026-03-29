@@ -569,6 +569,11 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
           {/* Auto-close settings */}
           <AutoCloseSettings account={account} onRefresh={onRefresh} />
 
+          {/* Import trade history — Tradovate only */}
+          {account.broker === 'tradovate' && (
+            <ImportHistory accountId={account.id} />
+          )}
+
           {/* Delete */}
           <div className="pt-2">
             {confirmDel ? (
@@ -707,6 +712,58 @@ function AutoCloseSettings({ account, onRefresh }) {
       >
         {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save auto-close settings'}
       </button>
+    </div>
+  )
+}
+
+function ImportHistory({ accountId }) {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+
+  const handleCsvUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    try {
+      const data = await brokersApi.importCsv(accountId, file)
+      setResult(data)
+    } catch (err) {
+      setError(err.detail || 'CSV import failed')
+    } finally {
+      setLoading(false)
+      e.target.value = ''  // reset file input
+    }
+  }
+
+  return (
+    <div className="border-t border-base-800 pt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium text-base-300">Import trade history</p>
+          <p className="text-xs text-base-500 mt-0.5">
+            Upload a Tradovate CSV export (Orders tab → Export)
+          </p>
+        </div>
+        <label className={`btn-primary text-xs py-1.5 px-3 flex items-center gap-2 cursor-pointer ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
+          {loading && <Spinner size="sm" />}
+          {loading ? 'Importing…' : 'Upload CSV'}
+          <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
+        </label>
+      </div>
+      {result && (
+        <div className="mt-2 text-xs font-mono text-accent">
+          Imported {result.imported} fills ({result.skipped} duplicates skipped)
+          {result.errors?.length > 0 && (
+            <span className="text-loss ml-2">({result.errors.length} errors)</span>
+          )}
+        </div>
+      )}
+      {error && (
+        <div className="mt-2 text-xs font-mono text-loss">{error}</div>
+      )}
     </div>
   )
 }

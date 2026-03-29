@@ -21,6 +21,10 @@ class WebhookPayload(BaseModel):
     price: float | None = None
     comment: str | None = None
 
+    # Algo tracking — optional identifiers for slicing P&L by strategy
+    algo_id: str | None = None         # e.g. "mean-revert-nq", "breakout-es"
+    algo_version: str | None = None    # e.g. "1.2.0", "v3-beta"
+
     # Limit / stop order controls
     time_in_force: TimeInForce = TimeInForce.GTC
     expire_at: datetime | None = None

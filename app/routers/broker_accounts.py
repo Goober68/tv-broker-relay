@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -186,6 +186,276 @@ async def update_account(
     await db.commit()
     await db.refresh(account)
     return _to_out(account)
+
+
+@router.post("/{account_id}/import-history")
+async def import_trade_history(
+    account_id: int,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch fill history from Tradovate and import as orders.
+    Skips fills that already exist (by broker_order_id).
+    Only works for Tradovate accounts with valid OAuth tokens.
+    """
+    import httpx
+    from app.services.credentials import decrypt_credentials
+    from app.models.order import Order, OrderStatus, OrderAction, OrderType, InstrumentType, DEFAULT_FUTURES_MULTIPLIERS
+
+    account = await get_broker_account(db, account_id, tenant.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+    if account.broker != "tradovate":
+        raise HTTPException(status_code=400, detail="Import is only supported for Tradovate accounts")
+
+    creds = decrypt_credentials(account.credentials_encrypted)
+    token = creds.get("access_token")
+    base_url = creds.get("base_url", "https://live.tradovateapi.com/v1")
+    if not token:
+        raise HTTPException(status_code=400, detail="No access token — reconnect via OAuth")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Fetch fills
+            fill_resp = await client.get(
+                f"{base_url}/fill/list",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if fill_resp.status_code == 401:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Tradovate token expired — reconnect this account via OAuth"
+                )
+            fill_resp.raise_for_status()
+            fills = fill_resp.json()
+
+            # Fetch orders to get action/symbol/contract info
+            order_resp = await client.get(
+                f"{base_url}/order/list",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            order_resp.raise_for_status()
+            orders_by_id = {o["id"]: o for o in order_resp.json()}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Tradovate API error: {str(e)}")
+
+    # Get existing broker_order_ids to skip duplicates
+    existing = await db.execute(
+        select(Order.broker_order_id).where(
+            Order.tenant_id == tenant.id,
+            Order.broker == "tradovate",
+            Order.account == account.account_alias,
+            Order.broker_order_id.isnot(None),
+        )
+    )
+    existing_ids = {r[0] for r in existing.fetchall()}
+
+    imported = 0
+    skipped = 0
+    for fill in fills:
+        order_id = fill.get("orderId")
+        order_data = orders_by_id.get(order_id, {})
+
+        # Only import fills for this account
+        acct_name = order_data.get("accountName") or order_data.get("accountSpec") or ""
+        if acct_name != account.account_alias:
+            continue
+
+        fill_id = str(fill.get("id", ""))
+        if fill_id in existing_ids:
+            skipped += 1
+            continue
+
+        action_str = order_data.get("action", "").lower()  # "Buy" or "Sell"
+        if action_str not in ("buy", "sell"):
+            continue
+
+        contract = order_data.get("contractName") or order_data.get("symbol") or ""
+        # Extract product root (strip month/year suffix)
+        root = ''.join(c for c in contract if c.isalpha())
+        multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
+
+        price = float(fill.get("price", 0))
+        qty = float(fill.get("qty", 0))
+        if qty == 0 or price == 0:
+            continue
+
+        # Parse timestamp
+        ts_str = fill.get("timestamp", "")
+        try:
+            from datetime import datetime as dt, timezone as tz
+            ts = dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except:
+            continue
+
+        order_type_str = order_data.get("orderType", "Market").lower()
+        ot = "market" if "market" in order_type_str else "limit" if "limit" in order_type_str else "stop"
+
+        order = Order(
+            created_at=ts,
+            updated_at=ts,
+            tenant_id=tenant.id,
+            broker="tradovate",
+            account=account.account_alias,
+            symbol=contract,
+            instrument_type="future",
+            action=action_str,
+            order_type=ot,
+            quantity=qty,
+            price=float(order_data.get("price")) if order_data.get("price") else None,
+            multiplier=multiplier,
+            status="filled",
+            filled_quantity=qty,
+            avg_fill_price=price,
+            broker_order_id=fill_id,
+            time_in_force="GTC",
+        )
+        db.add(order)
+        imported += 1
+        existing_ids.add(fill_id)
+
+    await db.commit()
+    return {"imported": imported, "skipped": skipped, "total_fills": len(fills)}
+
+
+@router.post("/{account_id}/import-csv")
+async def import_csv_history(
+    account_id: int,
+    file: UploadFile = File(...),
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Import trade history from a Tradovate CSV export.
+    Expects the standard Tradovate order export format with columns:
+    orderId, Account, B/S, Contract, Product, avgPrice, filledQty, Fill Time, Status, Type
+    """
+    import csv
+    import io
+    from app.models.order import (
+        Order, OrderStatus, OrderAction, OrderType,
+        InstrumentType, DEFAULT_FUTURES_MULTIPLIERS,
+    )
+
+    account = await get_broker_account(db, account_id, tenant.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+
+    content = await file.read()
+    text = content.decode("utf-8-sig")  # handle BOM from Windows exports
+    reader = csv.DictReader(io.StringIO(text))
+
+    # Get existing broker_order_ids to skip duplicates
+    existing = await db.execute(
+        select(Order.broker_order_id).where(
+            Order.tenant_id == tenant.id,
+            Order.broker == account.broker,
+            Order.account == account.account_alias,
+            Order.broker_order_id.isnot(None),
+        )
+    )
+    existing_ids = {r[0] for r in existing.fetchall()}
+
+    imported = 0
+    skipped = 0
+    errors = []
+
+    for row_num, row in enumerate(reader, start=2):
+        try:
+            status_val = (row.get("Status") or "").strip()
+            if status_val != "Filled":
+                continue
+
+            # Filter by account name if present in CSV
+            csv_account = (row.get("Account") or "").strip()
+            if csv_account and csv_account != account.account_alias:
+                continue
+
+            order_id = (row.get("orderId") or "").strip()
+            if order_id in existing_ids:
+                skipped += 1
+                continue
+
+            action_str = (row.get("B/S") or "").strip().lower()
+            if action_str not in ("buy", "sell"):
+                continue
+
+            contract = (row.get("Contract") or "").strip()
+            product = (row.get("Product") or "").strip()
+            avg_price_str = (row.get("avgPrice") or row.get("Avg Fill Price") or "").strip()
+            filled_qty_str = (row.get("filledQty") or row.get("Filled Qty") or "").strip()
+            fill_time_str = (row.get("Fill Time") or "").strip()
+            order_type_str = (row.get("Type") or "market").strip().lower()
+
+            if not avg_price_str or not filled_qty_str or not fill_time_str:
+                continue
+
+            avg_price = float(avg_price_str)
+            filled_qty = float(filled_qty_str)
+            if avg_price == 0 or filled_qty == 0:
+                continue
+
+            # Parse fill time: "MM/DD/YYYY HH:MM:SS"
+            from datetime import datetime as dt, timezone as tz
+            try:
+                fill_time = dt.strptime(fill_time_str, "%m/%d/%Y %H:%M:%S").replace(tzinfo=tz.utc)
+            except ValueError:
+                try:
+                    fill_time = dt.fromisoformat(fill_time_str.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+
+            # Root symbol for multiplier lookup
+            root = ''.join(c for c in (product or contract) if c.isalpha())
+            multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
+
+            ot = "market" if "market" in order_type_str else "limit" if "limit" in order_type_str else "stop"
+
+            price = None
+            if ot == "limit":
+                try: price = float((row.get("decimalLimit") or row.get("Limit Price") or "").strip())
+                except (ValueError, AttributeError): pass
+            elif ot == "stop":
+                try: price = float((row.get("decimalStop") or row.get("Stop Price") or "").strip())
+                except (ValueError, AttributeError): pass
+
+            order = Order(
+                created_at=fill_time,
+                updated_at=fill_time,
+                tenant_id=tenant.id,
+                broker=account.broker,
+                account=account.account_alias,
+                symbol=contract,
+                instrument_type="future",
+                action=action_str,
+                order_type=ot,
+                quantity=filled_qty,
+                price=price,
+                multiplier=multiplier,
+                status="filled",
+                filled_quantity=filled_qty,
+                avg_fill_price=avg_price,
+                broker_order_id=order_id,
+                time_in_force="GTC",
+            )
+            db.add(order)
+            imported += 1
+            existing_ids.add(order_id)
+
+        except Exception as e:
+            errors.append(f"Row {row_num}: {str(e)}")
+            if len(errors) > 10:
+                break
+
+    await db.commit()
+    result = {"imported": imported, "skipped": skipped}
+    if errors:
+        result["errors"] = errors[:10]
+    return result
 
 
 class DisplayNameUpdate(BaseModel):
