@@ -173,6 +173,168 @@ async def _ibkr_keepalive_once():
 
 # ── Position Reconciliation ────────────────────────────────────────────────────
 
+async def _sync_tradovate_fills(db, broker_account):
+    """
+    Sync fills from Tradovate via WebSocket for an OAuth-connected account.
+    Creates orders for any fills not already in the DB.
+    """
+    from app.services.credentials import decrypt_credentials, encrypt_credentials
+    from app.services.tradovate_sync import sync_fills
+    from app.models.order import Order, DEFAULT_FUTURES_MULTIPLIERS
+    import httpx
+
+    creds = decrypt_credentials(broker_account.credentials_encrypted)
+    if creds.get("auth_method") != "oauth":
+        return  # skip non-OAuth accounts
+
+    token = creds.get("access_token")
+    refresh_token = creds.get("refresh_token")
+    base_url = creds.get("base_url", "https://live.tradovateapi.com/v1")
+
+    if not token:
+        return
+
+    # Try to get account list (also validates token)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            acct_resp = await client.get(
+                f"{base_url}/account/list",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if acct_resp.status_code == 401 and refresh_token:
+                # Token expired — try refresh
+                from app.config import get_settings
+                settings = get_settings()
+                token_url = base_url.replace("/v1", "/auth/oauthtoken")
+                ref_resp = await client.post(token_url, data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": settings.tradovate_oauth_client_id,
+                    "client_secret": settings.tradovate_oauth_client_secret,
+                })
+                if ref_resp.status_code == 200:
+                    ref_data = ref_resp.json()
+                    token = ref_data.get("accessToken") or ref_data.get("access_token")
+                    new_refresh = ref_data.get("refresh_token") or ref_data.get("refreshToken")
+                    if token:
+                        creds["access_token"] = token
+                        if new_refresh:
+                            creds["refresh_token"] = new_refresh
+                        broker_account.credentials_encrypted = encrypt_credentials(creds)
+                        await db.commit()
+                        logger.info(f"Tradovate sync: refreshed token for {broker_account.account_alias}")
+
+                        acct_resp = await client.get(
+                            f"{base_url}/account/list",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                    else:
+                        logger.warning(f"Tradovate sync: token refresh failed for {broker_account.account_alias}")
+                        return
+                else:
+                    logger.warning(f"Tradovate sync: token refresh returned {ref_resp.status_code}")
+                    return
+            elif acct_resp.status_code == 401:
+                logger.debug(f"Tradovate sync: token expired, no refresh token for {broker_account.account_alias}")
+                return
+
+            acct_resp.raise_for_status()
+            accounts = acct_resp.json()
+    except Exception:
+        logger.exception(f"Tradovate sync: failed to fetch account list for {broker_account.account_alias}")
+        return
+
+    # Find numeric account ID
+    numeric_id = None
+    for a in accounts:
+        if a["name"] == broker_account.account_alias:
+            numeric_id = a["id"]
+            break
+    if numeric_id is None:
+        return
+
+    # WebSocket sync
+    try:
+        fills, orders_by_id = await sync_fills(base_url, token, numeric_id, broker_account.account_alias)
+    except Exception:
+        logger.exception(f"Tradovate sync: WebSocket sync failed for {broker_account.account_alias}")
+        return
+
+    if not fills and not orders_by_id:
+        logger.debug(f"Tradovate sync: no data for {broker_account.account_alias}")
+        return
+
+    # Get existing broker_order_ids
+    existing = await db.execute(
+        select(Order.broker_order_id).where(
+            Order.tenant_id == broker_account.tenant_id,
+            Order.broker == "tradovate",
+            Order.account == broker_account.account_alias,
+            Order.broker_order_id.isnot(None),
+        )
+    )
+    existing_ids = {r[0] for r in existing.fetchall()}
+
+    imported = 0
+    for fill in fills:
+        fill_id = str(fill.get("id", fill.get("orderId", "")))
+        if fill_id in existing_ids:
+            continue
+
+        order_id = fill.get("orderId")
+        order_data = orders_by_id.get(order_id, {})
+        action_str = (order_data.get("action") or fill.get("action", "")).upper()
+        if action_str not in ("BUY", "SELL"):
+            continue
+
+        contract = order_data.get("contractName") or fill.get("contractName", "")
+        root = ''.join(c for c in contract if c.isalpha())
+        multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
+
+        price = float(fill.get("price", 0))
+        qty = float(fill.get("qty", fill.get("filledQty", 0)))
+        if price == 0 or qty == 0:
+            continue
+
+        ts_str = fill.get("timestamp", "")
+        try:
+            from datetime import datetime as dt
+            ts = dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except Exception:
+            ts = datetime.now(timezone.utc)
+
+        order_type_str = (order_data.get("orderType") or "Market").upper()
+        ot = "MARKET" if "MARKET" in order_type_str else "LIMIT" if "LIMIT" in order_type_str else "STOP"
+
+        order = Order(
+            created_at=ts,
+            updated_at=ts,
+            tenant_id=broker_account.tenant_id,
+            broker="tradovate",
+            account=broker_account.account_alias,
+            symbol=contract,
+            instrument_type="FUTURE",
+            action=action_str,
+            order_type=ot,
+            quantity=qty,
+            price=float(order_data.get("price")) if order_data.get("price") else None,
+            multiplier=multiplier,
+            status="FILLED",
+            filled_quantity=qty,
+            avg_fill_price=price,
+            broker_order_id=fill_id,
+            time_in_force="GTC",
+            comment="Synced from Tradovate WebSocket",
+        )
+        db.add(order)
+        imported += 1
+        existing_ids.add(fill_id)
+
+    if imported > 0:
+        await db.commit()
+        logger.info(f"Tradovate sync: imported {imported} fills for {broker_account.account_alias}")
+
+
 async def _sync_oanda_closed_trades(db, broker, pos):
     """Fetch recent closed trades from Oanda and create synthetic close orders."""
     closed_trades = await broker.get_recent_closed_trades(pos.account)
@@ -277,6 +439,23 @@ async def _reconcile_once():
     In a future version this could emit alerts or write to a reconciliation_log table.
     """
     async with AsyncSessionLocal() as db:
+        # Sync Tradovate fills via WebSocket for all OAuth accounts
+        try:
+            from app.models.broker_account import BrokerAccount
+            tv_result = await db.execute(
+                select(BrokerAccount).where(
+                    BrokerAccount.broker == "tradovate",
+                    BrokerAccount.is_active == True,  # noqa: E712
+                )
+            )
+            for acct in tv_result.scalars().all():
+                try:
+                    await _sync_tradovate_fills(db, acct)
+                except Exception:
+                    logger.exception(f"Tradovate sync error for {acct.account_alias}")
+        except Exception:
+            logger.exception("Error in Tradovate sync phase of reconciliation")
+
         result = await db.execute(
             select(Position).where(
                 func.abs(Position.quantity) > 1e-9  # non-flat only
