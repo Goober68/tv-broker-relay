@@ -436,6 +436,10 @@ class OandaStreamManager:
         trade_id      = trigger.get("trade_id")
         trigger_db_id = trigger.get("id")
 
+        # Skip relay reference IDs — these aren't valid Oanda trade IDs
+        if trade_id and trade_id.startswith("relay_"):
+            trade_id = None
+
         try:
             async with httpx.AsyncClient(
                 headers=self._headers, timeout=10.0
@@ -443,18 +447,18 @@ class OandaStreamManager:
                 if trade_id:
                     # PATCH /v3/accounts/{id}/trades/{tradeID}/orders
                     # Attaches a trailing stop to a specific open trade
-                    url  = f"{self.api_url}/v3/accounts/{self.account_id}/trades/{trade_id}/orders"
+                    url  = f"{self.api_url}/accounts/{self.account_id}/trades/{trade_id}/orders"
                     body = {
                         "trailingStopLoss": {
                             "distance":    _fmt_price(symbol, trail_dist),
                             "timeInForce": "GFD",
                         }
                     }
-                    resp = await client.patch(url, json=body)
+                    resp = await client.put(url, json=body)
                 else:
                     # POST /v3/accounts/{id}/orders
                     # Places a TRAILING_STOP_LOSS order covering all open trades
-                    url  = f"{self.api_url}/v3/accounts/{self.account_id}/orders"
+                    url  = f"{self.api_url}/accounts/{self.account_id}/orders"
                     body = {
                         "order": {
                             "type":        "TRAILING_STOP_LOSS",

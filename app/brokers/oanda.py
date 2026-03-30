@@ -162,12 +162,15 @@ class OandaBroker(BrokerBase):
                 if "orderFillTransaction" in data:
                     fill_tx = data["orderFillTransaction"]
                     fill_price = fill_tx.get("price")
-                    # Extract clientTradeID from the trade opened by this fill
+                    # Extract trade ID from the trade opened by this fill
+                    # tradeOpened.tradeID is Oanda's numeric trade ID
                     client_trade_id = None
                     trades_opened = fill_tx.get("tradeOpened", {})
                     if trades_opened:
-                        client_ext = trades_opened.get("clientExtensions", {})
-                        client_trade_id = client_ext.get("id")
+                        client_trade_id = trades_opened.get("tradeID")
+                        if not client_trade_id:
+                            client_ext = trades_opened.get("clientExtensions", {})
+                            client_trade_id = client_ext.get("id")
                     return BrokerOrderResult(
                         success=True,
                         broker_order_id=self._extract_order_id(fill_tx),

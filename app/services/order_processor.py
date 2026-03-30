@@ -80,7 +80,7 @@ async def _create_trail_trigger(db, order, payload, result):
             account           = order.account,
             symbol            = order.symbol,
             direction         = order.action.value if hasattr(order.action, 'value') else order.action,
-            trigger_price     = payload.trail_trigger,   # absolute price (unchanged by converter)
+            trigger_price     = order.trail_trigger,        # converted to absolute price by offset_converter
             trail_distance    = order.trail_dist,         # converted distance (post offset_converter)
             trade_id          = result.client_trade_id,
             status            = "pending",
