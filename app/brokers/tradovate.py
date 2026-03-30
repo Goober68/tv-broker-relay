@@ -86,6 +86,21 @@ class TradovateBroker(BrokerBase):
 
     async def _ensure_authenticated(self) -> str:
         if self._access_token and self._token_expiry and datetime.now(timezone.utc) < self._token_expiry:
+            # Lazy-load account IDs if not yet populated
+            if self._account_id is None:
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        acct_resp = await client.get(
+                            f"{self.base_url}/account/list",
+                            headers={"Authorization": f"Bearer {self._access_token}"},
+                        )
+                        if acct_resp.status_code == 200:
+                            accounts = acct_resp.json()
+                            self._account_id_map = {a["name"]: a["id"] for a in accounts}
+                            if accounts:
+                                self._account_id = accounts[0]["id"]
+                except Exception:
+                    pass
             return self._access_token
 
         # OAuth accounts: use refresh token to get a new access token
@@ -426,6 +441,35 @@ class TradovateBroker(BrokerBase):
                                          broker_response=resp.text)
             except Exception as e:
                 return BrokerOrderResult(success=False, error_message=str(e))
+
+    async def get_balance(self, account: str) -> float | None:
+        token = await self._ensure_authenticated()
+        async with httpx.AsyncClient(headers=self._headers(token), timeout=10.0) as client:
+            try:
+                # cashBalance/list returns balances for all accounts under this login
+                resp = await client.get(f"{self.base_url}/cashBalance/list")
+                if resp.status_code != 200:
+                    return None
+
+                balances = resp.json()
+                if not balances:
+                    return None
+
+                # Match by accountId — need to resolve account name to numeric ID first
+                acct_id = self._account_id_map.get(account) or self._account_id
+                if acct_id:
+                    for cb in balances:
+                        if cb.get("accountId") == acct_id:
+                            return float(cb.get("amount", 0))
+
+                # Fallback: if only one balance, return it
+                if len(balances) == 1:
+                    return float(balances[0].get("amount", 0))
+
+                return None
+            except Exception:
+                logger.exception(f"Error fetching Tradovate balance for {account}")
+                return None
 
     async def get_position(self, account: str, symbol: str) -> float:
         token = await self._ensure_authenticated()

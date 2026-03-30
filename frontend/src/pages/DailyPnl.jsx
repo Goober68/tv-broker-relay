@@ -107,6 +107,7 @@ export default function PnlPage() {
               <thead>
                 <tr className="border-b border-base-800 text-base-500">
                   <th className="text-left font-medium px-4 py-2.5">Account</th>
+                  <th className="text-right font-medium px-3 py-2.5 w-24">Balance</th>
                   <th className="text-right font-medium px-3 py-2.5 w-28">{current.colLabel} Realized</th>
                   <th className="text-right font-medium px-3 py-2.5 w-24">Unrealized</th>
                   <th className="text-right font-medium px-3 py-2.5 w-28">{current.colLabel} Total</th>
@@ -133,6 +134,11 @@ export default function PnlPage() {
                           {account.display_name || account.account}
                         </div>
                         <div className="text-[10px] text-base-500 mt-0.5">{brokerLabel(account.broker)}</div>
+                      </td>
+                      <td className="text-right px-3 py-2.5 font-mono text-base-300">
+                        {account.balance != null
+                          ? `$${account.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          : <span className="text-base-600">—</span>}
                       </td>
                       <td className="text-right px-3 py-2.5 font-mono">
                         <PnlValue value={realized} prefix="$" decimals={2} />

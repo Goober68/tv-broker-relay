@@ -498,6 +498,8 @@ class AccountPnlSummary(BaseModel):
     account: str
     display_name: str | None
     bars: list[PnlBar]
+    # Account balance
+    balance: float | None = None
     # Drawdown tracking
     max_total_drawdown: float | None = None   # account limit
     max_daily_drawdown: float | None = None   # account limit
@@ -725,11 +727,23 @@ async def get_pnl_summary(
         current_drawdown = round(hwm - all_time_cumulative, 2)
         today_drawdown = round(today_hwm - today_cumulative, 2)
 
+        # Fetch account balance from broker
+        balance = None
+        try:
+            from app.brokers.registry import get_broker_for_tenant
+            broker_adapter = await get_broker_for_tenant(
+                acct.broker, acct.account_alias, tenant.id, db
+            )
+            balance = await broker_adapter.get_balance(acct.account_alias)
+        except Exception:
+            pass  # balance is optional — don't fail the summary
+
         summaries.append(AccountPnlSummary(
             broker       = acct.broker,
             account      = acct.account_alias,
             display_name = acct.display_name,
             bars         = bars,
+            balance      = balance,
             max_total_drawdown = acct.max_total_drawdown,
             max_daily_drawdown = acct.max_daily_drawdown,
             current_drawdown   = current_drawdown,

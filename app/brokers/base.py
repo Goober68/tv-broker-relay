@@ -42,6 +42,10 @@ class BrokerBase(ABC):
     async def cancel_order(self, broker_order_id: str, account: str) -> bool:
         ...
 
+    async def get_balance(self, account: str) -> float | None:
+        """Return the account balance in account currency. Override per broker."""
+        return None
+
     async def cancel_replace_order(
         self, broker_order_id: str, account: str, new_order: Order
     ) -> BrokerOrderResult:

@@ -433,6 +433,17 @@ class OandaBroker(BrokerBase):
                 logger.exception(f"Error polling Oanda order {broker_order_id}")
                 return OrderStatusResult(found=False, error_message=str(e))
 
+    async def get_balance(self, account: str) -> float | None:
+        account_id = self._resolve_account(account)
+        async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
+            try:
+                resp = await client.get(f"{self.base_url}/accounts/{account_id}/summary")
+                resp.raise_for_status()
+                return float(resp.json().get("account", {}).get("balance", 0))
+            except Exception:
+                logger.exception("Error fetching Oanda balance")
+                return None
+
     async def get_recent_closed_trades(self, account: str, count: int = 50) -> list[dict]:
         """
         Fetch recently closed trades from Oanda.

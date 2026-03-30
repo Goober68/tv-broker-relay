@@ -18,26 +18,39 @@ logger = logging.getLogger(__name__)
 #   response: "a[\"endpoint\\nid\\n\\njson_body\"]" (SockJS framed)
 
 
-def _parse_ws_messages(raw: str) -> list[dict]:
+def _parse_ws_messages(raw) -> list[dict]:
     """Parse SockJS-framed WebSocket messages from Tradovate."""
     messages = []
-    if raw.startswith("a["):
+    raw_str = str(raw) if not isinstance(raw, str) else raw
+
+    if raw_str.startswith("a["):
         try:
-            outer = json.loads(raw[1:])  # strip 'a' prefix
+            outer = json.loads(raw_str[1:])  # strip 'a' prefix
             for item in outer:
-                # Each item is "endpoint\nid\n\njson_body"
-                parts = item.split("\n", 3)
-                if len(parts) >= 4:
-                    try:
-                        body = json.loads(parts[3])
-                        messages.append({"endpoint": parts[0], "id": parts[1], "body": body})
-                    except json.JSONDecodeError:
-                        pass
-        except json.JSONDecodeError:
+                if isinstance(item, dict):
+                    # Already parsed as dict
+                    messages.append({"endpoint": "", "id": "", "body": item})
+                elif isinstance(item, str):
+                    # "endpoint\nid\n\njson_body"
+                    parts = item.split("\n", 3)
+                    if len(parts) >= 4:
+                        try:
+                            body = json.loads(parts[3])
+                            messages.append({"endpoint": parts[0], "id": parts[1], "body": body})
+                        except json.JSONDecodeError:
+                            pass
+                    elif len(parts) >= 1:
+                        # Try parsing the whole thing as JSON
+                        try:
+                            body = json.loads(item)
+                            messages.append({"endpoint": "", "id": "", "body": body})
+                        except json.JSONDecodeError:
+                            pass
+        except (json.JSONDecodeError, TypeError):
             pass
-    elif raw.startswith("o"):
+    elif raw_str.startswith("o"):
         pass  # connection open frame
-    elif raw.startswith("h"):
+    elif raw_str.startswith("h"):
         pass  # heartbeat
     return messages
 
@@ -65,21 +78,29 @@ async def sync_fills(
         async with websockets.connect(ws_url, close_timeout=5) as ws:
             # Wait for open frame
             open_msg = await asyncio.wait_for(ws.recv(), timeout=10)
-            logger.debug(f"WS open: {open_msg[:100]}")
+            logger.debug(f"WS open: {str(open_msg)[:100]}")
 
-            # Authenticate
+            # Authenticate — Tradovate expects the token as the body of an "authorize" request
+            auth_body = json.dumps(access_token) if isinstance(access_token, str) else json.dumps(str(access_token))
             auth_msg = f"authorize\n{request_id}\n\n{access_token}"
             request_id += 1
             await ws.send(auth_msg)
 
             auth_resp = await asyncio.wait_for(ws.recv(), timeout=10)
-            logger.debug(f"WS auth response: {auth_resp[:200]}")
+            auth_str = str(auth_resp)
+            logger.info(f"Tradovate WS auth response ({account_name}): {auth_str[:300]}")
+
+            # Check for auth failure
+            if "error" in auth_str.lower() or "unauthorized" in auth_str.lower():
+                logger.warning(f"Tradovate WS auth failed for {account_name}: {auth_str[:200]}")
+                return fills, orders_by_id
 
             # Request sync for this account
             sync_body = json.dumps({"accounts": [account_id]})
             sync_msg = f"user/syncrequest\n{request_id}\n\n{sync_body}"
             request_id += 1
             await ws.send(sync_msg)
+            logger.info(f"Tradovate WS sync request sent for {account_name} (acct_id={account_id})")
 
             # Collect responses until we get no more data
             # Tradovate sends multiple frames with different entity types
@@ -96,6 +117,11 @@ async def sync_fills(
                     continue
 
                 empty_count = 0
+                raw_str = str(raw)
+                if len(fills) == 0 and len(orders_by_id) == 0:
+                    # Log first few messages for debugging
+                    logger.debug(f"Tradovate WS [{account_name}]: {raw_str[:500]}")
+
                 parsed = _parse_ws_messages(raw)
 
                 for msg in parsed:
