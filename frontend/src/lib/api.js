@@ -161,7 +161,7 @@ export const brokerAccounts = {
     return request(`/api/broker-accounts/${id}/import-csv`, { method: 'POST', body: form })
   },
   updateAutoClose: (id, body)    => api.patch(`/api/broker-accounts/${id}/auto-close`, body),
-  updateDrawdown:  (id, body)    => api.patch(`/api/broker-accounts/${id}/drawdown-limits`, body),
+  updateDrawdown:  (id, body)    => api.patch(`/api/broker-accounts/${id}/drawdown-limits`, body),  // also handles commission_per_contract
   suspend:         (id, active)  => api.patch(`/api/broker-accounts/${id}/suspend`, { is_active: active }),
   flatten:         (id)          => api.post(`/api/broker-accounts/${id}/flatten`),
   updateFifo:      (id, body)    => api.patch(`/api/broker-accounts/${id}/fifo`, body),

@@ -570,6 +570,11 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
           {/* Drawdown limits */}
           <DrawdownSettings account={account} onRefresh={onRefresh} />
 
+          {/* Reconnect OAuth — Tradovate only */}
+          {account.broker === 'tradovate' && (
+            <ReconnectOAuth account={account} />
+          )}
+
           {/* Import trade history — Tradovate only */}
           {account.broker === 'tradovate' && (
             <ImportHistory accountId={account.id} />
@@ -792,16 +797,47 @@ function AccountControls({ account, onRefresh }) {
   )
 }
 
+function ReconnectOAuth({ account }) {
+  const handleReconnect = async () => {
+    try {
+      const env = account.credential_summary?.base_url?.includes('demo') ? 'demo' : 'live'
+      const { url } = await brokersApi.tradovateOAuthUrl(env)
+      window.location.href = url
+    } catch {}
+  }
+
+  return (
+    <div className="border-t border-base-800 pt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium text-base-300">OAuth connection</p>
+          <p className="text-xs text-base-500 mt-0.5">
+            Re-authorize if token expired (Access is denied errors)
+          </p>
+        </div>
+        <button
+          onClick={handleReconnect}
+          className="text-xs py-1.5 px-3 rounded font-medium bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 transition-colors"
+        >
+          Reconnect Tradovate
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function DrawdownSettings({ account, onRefresh }) {
   const [totalDD, setTotalDD] = useState(account.max_total_drawdown ?? '')
   const [dailyDD, setDailyDD] = useState(account.max_daily_drawdown ?? '')
+  const [commission, setCommission] = useState(account.commission_per_contract ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     setTotalDD(account.max_total_drawdown ?? '')
     setDailyDD(account.max_daily_drawdown ?? '')
-  }, [account.max_total_drawdown, account.max_daily_drawdown])
+    setCommission(account.commission_per_contract ?? '')
+  }, [account.max_total_drawdown, account.max_daily_drawdown, account.commission_per_contract])
 
   const handleSave = async () => {
     setSaving(true)
@@ -809,6 +845,7 @@ function DrawdownSettings({ account, onRefresh }) {
       await brokersApi.updateDrawdown(account.id, {
         max_total_drawdown: totalDD === '' ? null : parseFloat(totalDD),
         max_daily_drawdown: dailyDD === '' ? null : parseFloat(dailyDD),
+        commission_per_contract: commission === '' ? null : parseFloat(commission),
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -819,8 +856,18 @@ function DrawdownSettings({ account, onRefresh }) {
 
   return (
     <div className="border-t border-base-800 pt-4">
-      <p className="text-xs font-medium text-base-300 mb-3">Drawdown limits</p>
-      <div className="flex items-end gap-4">
+      <p className="text-xs font-medium text-base-300 mb-3">Account settings</p>
+      <div className="flex items-end gap-4 flex-wrap">
+        <div>
+          <label className="block text-[10px] text-base-500 mb-1">Commission $/contract/side</label>
+          <input
+            className="input py-1 text-xs font-mono w-28"
+            type="number" step="0.01" min="0"
+            placeholder="e.g. 2.88"
+            value={commission}
+            onChange={e => setCommission(e.target.value)}
+          />
+        </div>
         <div>
           <label className="block text-[10px] text-base-500 mb-1">Max total drawdown ($)</label>
           <input
@@ -850,7 +897,7 @@ function DrawdownSettings({ account, onRefresh }) {
         </button>
       </div>
       <p className="text-[10px] text-base-500 mt-2">
-        Leave blank if this account has no drawdown limits.
+        Commission deducted per side in P&L calc. Leave drawdown blank if no limits.
       </p>
     </div>
   )
@@ -957,17 +1004,19 @@ function InstrumentMap({ accountId }) {
   const [secType, setSecType]   = useState('STK')
   const [exchange, setExchange] = useState('')
   const [multiplier, setMult]   = useState('')
+  const [commissionVal, setCommissionVal] = useState('')
 
   const handleAdd = async (e) => {
     e.preventDefault()
     const entry = {}
-    if (conid)      entry.conid      = parseInt(conid)
-    if (secType)    entry.sec_type   = secType
-    if (exchange)   entry.exchange   = exchange
-    if (multiplier) entry.multiplier = parseFloat(multiplier)
+    if (conid)         entry.conid      = parseInt(conid)
+    if (secType)       entry.sec_type   = secType
+    if (exchange)      entry.exchange   = exchange
+    if (multiplier)    entry.multiplier = parseFloat(multiplier)
+    if (commissionVal) entry.commission = parseFloat(commissionVal)
     await brokersApi.upsertInstrument(accountId, symbol.toUpperCase(), entry)
     setAdding(false)
-    setSymbol(''); setConid(''); setExchange(''); setMult('')
+    setSymbol(''); setConid(''); setExchange(''); setMult(''); setCommissionVal('')
     refetch()
   }
 
@@ -1000,6 +1049,7 @@ function InstrumentMap({ accountId }) {
             </select>
             <input className="input py-1 text-xs" placeholder="Exchange (e.g. CME)" value={exchange} onChange={e => setExchange(e.target.value)} />
             <input className="input py-1 text-xs" placeholder="Multiplier (e.g. 50)" value={multiplier} onChange={e => setMult(e.target.value)} />
+            <input className="input py-1 text-xs" placeholder="Commission $/side (e.g. 2.50)" value={commissionVal} onChange={e => setCommissionVal(e.target.value)} />
           </div>
           <button type="submit" className="btn-primary text-xs py-1 px-3">Save instrument</button>
         </form>
@@ -1014,7 +1064,15 @@ function InstrumentMap({ accountId }) {
           {instruments.map(([sym, cfg]) => (
             <div key={sym} className="flex items-center gap-3 px-3 py-2 border-b border-base-800 last:border-0 text-xs">
               <span className="font-mono font-bold text-base-100 w-12">{sym}</span>
-              <span className="text-base-500 font-mono flex-1">{JSON.stringify(cfg)}</span>
+              <span className="text-base-500 font-mono flex-1">
+                {[
+                  cfg.multiplier && `×${cfg.multiplier}`,
+                  cfg.commission != null && `$${cfg.commission}/side`,
+                  cfg.exchange,
+                  cfg.sec_type,
+                  cfg.conid && `conid:${cfg.conid}`,
+                ].filter(Boolean).join(' · ') || '—'}
+              </span>
               <button onClick={() => handleDelete(sym)} className="text-base-600 hover:text-loss transition-colors">✕</button>
             </div>
           ))}

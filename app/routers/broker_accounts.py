@@ -78,6 +78,7 @@ class BrokerAccountOut(BaseModel):
     fifo_max_offset: int = 3
     max_total_drawdown: float | None = None
     max_daily_drawdown: float | None = None
+    commission_per_contract: float | None = None
     created_at: datetime
     updated_at: datetime
     # Redacted credential summary — never returns raw secrets
@@ -106,6 +107,7 @@ def _to_out(account) -> BrokerAccountOut:
         fifo_max_offset=account.fifo_max_offset,
         max_total_drawdown=account.max_total_drawdown,
         max_daily_drawdown=account.max_daily_drawdown,
+        commission_per_contract=account.commission_per_contract,
         created_at=account.created_at,
         updated_at=account.updated_at,
         credential_summary=summary,
@@ -846,6 +848,7 @@ class InstrumentMapEntry(BaseModel):
     sec_type: str | None = None
     exchange: str | None = None
     multiplier: float | None = None
+    commission: float | None = None  # per-contract per-side, overrides account default
 
     class Config:
         json_schema_extra = {
@@ -1091,6 +1094,7 @@ async def flatten_positions(
 class DrawdownUpdate(BaseModel):
     max_total_drawdown: float | None = None
     max_daily_drawdown: float | None = None
+    commission_per_contract: float | None = None
 
 
 @router.patch("/{account_id}/drawdown-limits", status_code=200)
@@ -1111,6 +1115,7 @@ async def update_drawdown_limits(
         raise HTTPException(status_code=404, detail="Broker account not found")
     account.max_total_drawdown = body.max_total_drawdown
     account.max_daily_drawdown = body.max_daily_drawdown
+    account.commission_per_contract = body.commission_per_contract
     await db.commit()
     return {
         "id": account.id,

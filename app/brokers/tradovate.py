@@ -309,9 +309,10 @@ class TradovateBroker(BrokerBase):
                 # startOrderStrategy bracket values are RELATIVE offsets from entry.
                 # order.take_profit is already an absolute price (post offset_converter).
                 # We must subtract the entry price to get the relative offset.
+                # Sign: positive for buy (above entry), negative for sell (below entry)
                 ref_price = order.price or order.avg_fill_price
                 if ref_price:
-                    bracket["profitTarget"] = abs(order.take_profit - ref_price)
+                    bracket["profitTarget"] = abs(order.take_profit - ref_price) * sign
                 else:
                     # Market order with no reference price — log warning.
                     # take_profit is absolute; best we can do is use it as-is and
@@ -331,9 +332,18 @@ class TradovateBroker(BrokerBase):
                         f"cannot compute relative stopLoss from absolute {order.stop_loss}"
                     )
                     bracket["stopLoss"] = order.stop_loss * loss
+            # autoTrail values are in price distance (absolute value, direction-agnostic):
+            #   stopLoss: trailing distance in points (e.g. 2.0 = $2 trail)
+            #   trigger:  points of profit before trail activates (e.g. 6.25 = $6.25 profit)
+            #   freq:     minimum price move before trail updates (e.g. 0.25)
+            # The offset_converter already converted ticks→points for trail_dist/trail_update.
             auto_trail: dict = {"stopLoss": abs(order.trail_dist)}
             if order.trail_trigger is not None:
-                auto_trail["trigger"] = order.trail_trigger
+                ref_price = order.price or order.avg_fill_price
+                if ref_price:
+                    auto_trail["trigger"] = abs(order.trail_trigger - ref_price)
+                else:
+                    auto_trail["trigger"] = order.trail_trigger
             if order.trail_update is not None:
                 auto_trail["freq"] = order.trail_update
             bracket["autoTrail"] = auto_trail
@@ -441,6 +451,36 @@ class TradovateBroker(BrokerBase):
                                          broker_response=resp.text)
             except Exception as e:
                 return BrokerOrderResult(success=False, error_message=str(e))
+
+    async def get_quote(self, symbol: str) -> dict | None:
+        """Fetch current bid/ask/last for a symbol. Returns {bid, ask, mid, last} or None."""
+        token = await self._ensure_authenticated()
+        async with httpx.AsyncClient(headers=self._headers(token), timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/md/getQuote",
+                    params={"symbol": symbol},
+                )
+                if resp.status_code != 200:
+                    return None
+                q = resp.json()
+                bid = q.get("bid")
+                ask = q.get("ask")
+                last = q.get("last")
+                mid = None
+                if bid and ask:
+                    mid = (float(bid) + float(ask)) / 2
+                elif last:
+                    mid = float(last)
+                return {
+                    "bid": float(bid) if bid else None,
+                    "ask": float(ask) if ask else None,
+                    "mid": mid,
+                    "last": float(last) if last else None,
+                }
+            except Exception:
+                logger.exception(f"Error fetching Tradovate quote for {symbol}")
+                return None
 
     async def get_balance(self, account: str) -> float | None:
         token = await self._ensure_authenticated()

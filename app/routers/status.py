@@ -170,6 +170,7 @@ class DeliveryOut(BaseModel):
     user_agent: str | None = None
     broker_request:  str | None = None   # outbound JSON sent to broker (from joined order row)
     broker_response: str | None = None   # response body received from broker
+    account_display_name: str | None = None
 
     class Config:
         from_attributes = False  # manual construction — not direct ORM mapping
@@ -198,6 +199,26 @@ async def list_webhook_deliveries(
         stmt = stmt.where(WebhookDelivery.outcome == outcome)
     result = await db.execute(stmt)
     rows = result.all()
+
+    # Build account alias → display name lookup
+    acct_result = await db.execute(
+        select(BrokerAccount.account_alias, BrokerAccount.display_name).where(
+            BrokerAccount.tenant_id == tenant.id,
+        )
+    )
+    display_names = {r[0]: r[1] for r in acct_result.fetchall() if r[1]}
+
+    import json as _json
+    def _get_display_name(raw_payload: str | None) -> str | None:
+        if not raw_payload:
+            return None
+        try:
+            p = _json.loads(raw_payload)
+            alias = p.get("account", "primary")
+            return display_names.get(alias)
+        except Exception:
+            return None
+
     return [
         DeliveryOut(
             id=d.id,
@@ -213,6 +234,7 @@ async def list_webhook_deliveries(
             user_agent=d.user_agent,
             broker_request=broker_request,
             broker_response=broker_response,
+            account_display_name=_get_display_name(d.raw_payload),
         )
         for d, broker_request, broker_response, order_error in rows
     ]
@@ -500,6 +522,7 @@ class AccountPnlSummary(BaseModel):
     bars: list[PnlBar]
     # Account balance
     balance: float | None = None
+    commission_per_contract: float | None = None
     # Drawdown tracking
     max_total_drawdown: float | None = None   # account limit
     max_daily_drawdown: float | None = None   # account limit
@@ -593,6 +616,21 @@ async def get_pnl_summary(
         # realized_events = [(timestamp, pnl, symbol), ...]
         realized_events = []
         open_lots: dict[str, deque] = {}  # symbol → deque of (qty, price, multiplier)
+        default_commission = acct.commission_per_contract or 0.0
+        instrument_map = acct.instrument_map or {}
+
+        def _get_commission(symbol: str) -> float:
+            """Look up per-product commission, fall back to account default."""
+            # Try full symbol (e.g. NQM6)
+            instr = instrument_map.get(symbol, {})
+            if isinstance(instr, dict) and "commission" in instr:
+                return float(instr["commission"])
+            # Try root symbol (e.g. NQ)
+            root = ''.join(c for c in symbol if c.isalpha())
+            instr = instrument_map.get(root, {})
+            if isinstance(instr, dict) and "commission" in instr:
+                return float(instr["commission"])
+            return default_commission
 
         for fill in fills:
             ts = fill.created_at
@@ -638,6 +676,11 @@ async def get_pnl_summary(
                     if len(sym_clean) == 6 and sym_clean[3:6] != "USD":
                         if price > 0:
                             pnl = pnl / price
+
+                    # Deduct round-trip commission (entry + exit side)
+                    sym_commission = _get_commission(sym)
+                    if sym_commission > 0:
+                        pnl -= 2 * sym_commission * match_qty
 
                     realized_events.append((ts, pnl))
 
@@ -744,6 +787,7 @@ async def get_pnl_summary(
             display_name = acct.display_name,
             bars         = bars,
             balance      = balance,
+            commission_per_contract = acct.commission_per_contract,
             max_total_drawdown = acct.max_total_drawdown,
             max_daily_drawdown = acct.max_daily_drawdown,
             current_drawdown   = current_drawdown,

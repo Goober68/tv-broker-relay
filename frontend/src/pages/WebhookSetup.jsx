@@ -157,6 +157,17 @@ function DeliveryRow({ delivery: d, inspecting, setInspecting }) {
   // broker_response = raw response body received back from the broker
   const responseJson = d.broker_response ? fmtJson(d.broker_response) : null
 
+  // Extract target account from payload for summary line
+  const target = (() => {
+    try {
+      const p = JSON.parse(d.raw_payload || '{}')
+      const acct = p.account || 'primary'
+      const sym = p.symbol || ''
+      const action = (p.action || '').toUpperCase()
+      return { acct, sym, action }
+    } catch { return null }
+  })()
+
   const hasDetail = inboundJson || outboundJson || responseJson || d.error_detail
 
   return (
@@ -173,8 +184,15 @@ function DeliveryRow({ delivery: d, inspecting, setInspecting }) {
           {new Date(d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </span>
         <StatusBadge status={d.outcome} />
-        <span className="font-mono text-xs text-base-400 w-8">{d.http_status}</span>
-        <span className="font-mono text-xs text-base-500 w-16">
+        {target && (
+          <span className="font-mono text-xs text-base-300 truncate flex-shrink-0" style={{maxWidth: '20rem'}}>
+            <span className={target.action === 'BUY' ? 'text-accent' : target.action === 'SELL' ? 'text-loss' : 'text-warn'}>{target.action}</span>
+            {' '}{target.sym}
+            <span className="text-base-500">{' '}TradingView → </span>
+            {d.account_display_name || target.acct}
+          </span>
+        )}
+        <span className="font-mono text-xs text-base-500 w-16 flex-shrink-0">
           {d.duration_ms ? `${d.duration_ms.toFixed(0)}ms` : '—'}
         </span>
         <span className="font-mono text-xs text-base-500 flex-1">{d.source_ip || '—'}</span>

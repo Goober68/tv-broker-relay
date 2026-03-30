@@ -83,6 +83,9 @@ class BrokerAccount(Base):
     max_total_drawdown:  Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 2500.00
     max_daily_drawdown:  Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 1500.00
 
+    # Commission per contract per side (for P&L calculation)
+    commission_per_contract: Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 2.88
+
     tenant: Mapped["Tenant"] = relationship(back_populates="broker_accounts")  # type: ignore
 
     def get_instrument(self, symbol: str) -> dict | None:

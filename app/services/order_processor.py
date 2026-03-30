@@ -253,15 +253,13 @@ async def process_webhook(
     # Resolve entry price for SL/TP offset conversion.
     # Always prefer the live stream mid over the payload price — the stream is
     # real-time whereas {{close}} from PineScript can be a bar behind.
-    # Falls back to payload.price if the stream has no cached price for the symbol,
-    # and falls back further to None for non-Oanda brokers.
+    # Falls back to payload.price if no live price is available.
     entry_price = payload.price
-    if (
-        payload.broker == "oanda"
-        and payload.sl_tp_type in ("pips", "ticks", "points")
-        and (payload.stop_loss is not None or payload.take_profit is not None
-             or payload.trailing_distance is not None)
-    ):
+    has_offsets = (payload.stop_loss is not None or payload.take_profit is not None
+                   or payload.trailing_distance is not None or payload.trail_trigger is not None)
+    needs_conversion = payload.sl_tp_type in ("pips", "pipettes", "ticks", "points") and has_offsets
+
+    if needs_conversion and payload.broker == "oanda":
         from app.services.oanda_stream import get_manager
         manager = get_manager("oanda", payload.account)
         if manager:
@@ -273,11 +271,37 @@ async def process_webhook(
                     f"as entry price for {payload.sl_tp_type} SL/TP conversion"
                     + (f" (overriding payload price {payload.price})" if payload.price else "")
                 )
-            elif entry_price is None:
-                logger.warning(
-                    f"{payload.symbol}: no cached price in stream and no price in payload — "
-                    f"sl_tp_type='{payload.sl_tp_type}' values will be treated as absolute."
-                )
+
+    if needs_conversion and payload.broker == "tradovate":
+        # Fetch live quote from Tradovate for accurate offset conversion
+        logger.info(f"{payload.symbol}: fetching Tradovate quote for {payload.sl_tp_type} conversion")
+        try:
+            broker_adapter = await get_broker_for_tenant(
+                payload.broker, payload.account, tenant_id, db
+            )
+            from app.brokers.tradovate import TradovateBroker
+            if isinstance(broker_adapter, TradovateBroker):
+                quote = await broker_adapter.get_quote(payload.symbol)
+                logger.info(f"{payload.symbol}: Tradovate quote result: {quote}")
+                if quote and quote.get("mid"):
+                    entry_price = quote["mid"]
+                    logger.info(
+                        f"{payload.symbol}: using Tradovate quote mid {entry_price:.2f} "
+                        f"as entry price for {payload.sl_tp_type} SL/TP conversion"
+                        + (f" (overriding payload price {payload.price})" if payload.price else "")
+                    )
+                else:
+                    logger.warning(f"{payload.symbol}: Tradovate quote returned no mid price")
+            else:
+                logger.warning(f"{payload.symbol}: broker adapter is {type(broker_adapter)}, not TradovateBroker")
+        except Exception as e:
+            logger.warning(f"{payload.symbol}: could not fetch Tradovate quote: {e}")
+
+    if needs_conversion and entry_price is None:
+        logger.warning(
+            f"{payload.symbol}: no live price and no price in payload — "
+            f"sl_tp_type='{payload.sl_tp_type}' values will be treated as absolute."
+        )
 
     # Convert SL/TP/trailing from offsets (ticks/pips/points) to absolute prices if needed
     levels = convert_sl_tp(
