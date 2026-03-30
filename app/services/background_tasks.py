@@ -173,6 +173,99 @@ async def _ibkr_keepalive_once():
 
 # ── Position Reconciliation ────────────────────────────────────────────────────
 
+async def _sync_oanda_closed_trades(db, broker, pos):
+    """Fetch recent closed trades from Oanda and create synthetic close orders."""
+    closed_trades = await broker.get_recent_closed_trades(pos.account)
+    if not closed_trades:
+        return
+
+    # Only sync trades from the last 30 days to avoid importing ancient history
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+
+    total_realized = 0.0
+    for ct in closed_trades:
+        if ct["realized_pl"] == 0:
+            continue
+        # Skip old trades
+        if ct.get("close_time"):
+            try:
+                from datetime import datetime as dt
+                ct_time = dt.fromisoformat(ct["close_time"].replace("Z", "+00:00"))
+                if ct_time < cutoff:
+                    continue
+            except Exception:
+                pass
+        # Check if we already have this trade recorded
+        existing = await db.execute(
+            select(Order).where(
+                Order.tenant_id == pos.tenant_id,
+                Order.broker_order_id == f"oanda_close_{ct['trade_id']}",
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue
+
+        total_realized += ct["realized_pl"]
+
+        from datetime import datetime as dt
+        close_time = None
+        if ct.get("close_time"):
+            try:
+                close_time = dt.fromisoformat(ct["close_time"].replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        close_action = "BUY" if float(ct["units"]) < 0 else "SELL"
+        close_order = Order(
+            created_at=close_time or datetime.now(timezone.utc),
+            updated_at=close_time or datetime.now(timezone.utc),
+            tenant_id=pos.tenant_id,
+            broker=pos.broker,
+            account=pos.account,
+            symbol=ct["symbol"],
+            instrument_type=pos.instrument_type,
+            action=close_action,
+            order_type="MARKET",
+            quantity=abs(float(ct["units"])),
+            multiplier=pos.multiplier,
+            status="FILLED",
+            filled_quantity=abs(float(ct["units"])),
+            avg_fill_price=ct["close_price"],
+            broker_order_id=f"oanda_close_{ct['trade_id']}",
+            time_in_force="FOK",
+            comment="SL/TP/TSL close (reconciled from Oanda)",
+        )
+        db.add(close_order)
+        logger.info(
+            f"RECONCILIATION: Synced Oanda closed trade {ct['trade_id']} "
+            f"{ct['symbol']} P&L={ct['realized_pl']:.2f}"
+        )
+
+    if total_realized != 0:
+        # Find the position for this symbol to update realized P&L
+        from sqlalchemy import and_
+        pos_result = await db.execute(
+            select(Position).where(
+                Position.tenant_id == pos.tenant_id,
+                Position.broker == pos.broker,
+                Position.account == pos.account,
+                Position.symbol == closed_trades[0]["symbol"],
+            )
+        )
+        position = pos_result.scalar_one_or_none()
+        if position:
+            position.realized_pnl += total_realized
+            now = datetime.now(timezone.utc)
+            if position.daily_pnl_date and position.daily_pnl_date.date() == now.date():
+                position.daily_realized_pnl += total_realized
+            else:
+                position.daily_realized_pnl = total_realized
+                position.daily_pnl_date = now
+        await db.commit()
+        logger.info(f"RECONCILIATION: Total synced P&L for {pos.account}: {total_realized:.2f}")
+
+
 async def _reconcile_once():
     """
     Sync internal position state against broker APIs.
@@ -196,11 +289,27 @@ async def _reconcile_once():
 
         logger.debug(f"Reconciliation: checking {len(positions)} open positions")
 
+        # Track which oanda accounts we've already synced closed trades for
+        _oanda_synced: set[str] = set()
+
         for pos in positions:
             try:
                 broker = await get_broker_for_tenant(
                     pos.broker, pos.account, pos.tenant_id, db
                 )
+
+                # Always sync closed trades from Oanda (once per account per cycle)
+                if pos.broker == "oanda":
+                    acct_key = f"{pos.tenant_id}:{pos.account}"
+                    if acct_key not in _oanda_synced:
+                        _oanda_synced.add(acct_key)
+                        from app.brokers.oanda import OandaBroker
+                        if isinstance(broker, OandaBroker):
+                            try:
+                                await _sync_oanda_closed_trades(db, broker, pos)
+                            except Exception:
+                                logger.exception(f"Error syncing Oanda closed trades for {pos.account}")
+
                 broker_qty = await broker.get_position(pos.account, pos.symbol)
                 internal_qty = pos.quantity
 
@@ -209,13 +318,84 @@ async def _reconcile_once():
 
                 if abs(broker_qty) < 1e-9 and abs(internal_qty) > 0:
                     # Broker shows flat — position was closed externally (TP/SL hit,
-                    # manual close, or liquidation). Auto-correct the relay's state.
+                    # manual close, or liquidation). Fetch realized P&L from broker.
+                    realized = 0.0
+
+                    if pos.broker == "oanda":
+                        from app.brokers.oanda import OandaBroker
+                        if isinstance(broker, OandaBroker):
+                            try:
+                                closed_trades = await broker.get_recent_closed_trades(pos.account)
+                                for ct in closed_trades:
+                                    if ct["symbol"] != pos.symbol or ct["realized_pl"] == 0:
+                                        continue
+                                    # Check if we already have this trade recorded
+                                    existing = await db.execute(
+                                        select(Order).where(
+                                            Order.tenant_id == pos.tenant_id,
+                                            Order.broker_order_id == f"oanda_close_{ct['trade_id']}",
+                                        )
+                                    )
+                                    if existing.scalar_one_or_none():
+                                        continue
+
+                                    realized += ct["realized_pl"]
+                                    logger.info(
+                                        f"RECONCILIATION: Found closed trade {ct['trade_id']} "
+                                        f"{pos.symbol} P&L={ct['realized_pl']:.2f}"
+                                    )
+
+                                    # Create synthetic close order for P&L tracking
+                                    from datetime import datetime as dt
+                                    close_time = None
+                                    if ct.get("close_time"):
+                                        try:
+                                            close_time = dt.fromisoformat(ct["close_time"].replace("Z", "+00:00"))
+                                        except Exception:
+                                            pass
+                                    close_action = "BUY" if ct["units"] < 0 else "SELL"
+                                    close_order = Order(
+                                        created_at=close_time or datetime.now(timezone.utc),
+                                        updated_at=close_time or datetime.now(timezone.utc),
+                                        tenant_id=pos.tenant_id,
+                                        broker=pos.broker,
+                                        account=pos.account,
+                                        symbol=pos.symbol,
+                                        instrument_type=pos.instrument_type,
+                                        action=close_action,
+                                        order_type="MARKET",
+                                        quantity=abs(ct["units"]),
+                                        multiplier=pos.multiplier,
+                                        status="FILLED",
+                                        filled_quantity=abs(ct["units"]),
+                                        avg_fill_price=ct["close_price"],
+                                        broker_order_id=f"oanda_close_{ct['trade_id']}",
+                                        time_in_force="FOK",
+                                        comment="SL/TP/TSL close (reconciled from Oanda)",
+                                    )
+                                    db.add(close_order)
+
+                            except Exception:
+                                logger.exception("Error fetching closed trades for reconciliation")
+
                     logger.info(
                         f"RECONCILIATION: Position {pos.id} "
                         f"tenant={pos.tenant_id} {pos.broker}/{pos.symbol} "
                         f"closed at broker (was {internal_qty:.4f}). "
-                        f"Zeroing relay position."
+                        f"Realized P&L: {realized:.2f}. Zeroing relay position."
                     )
+
+                    # Update position P&L
+                    if realized != 0:
+                        pos.realized_pnl += realized
+                        from datetime import datetime, timezone
+                        now = datetime.now(timezone.utc)
+                        if pos.daily_pnl_date and pos.daily_pnl_date.date() == now.date():
+                            pos.daily_realized_pnl += realized
+                        else:
+                            pos.daily_realized_pnl = realized
+                            pos.daily_pnl_date = now
+
                     pos.quantity       = 0.0
                     pos.unrealized_pnl = None
                     pos.last_price     = None
@@ -229,12 +409,80 @@ async def _reconcile_once():
                 drift_pct = abs((broker_qty - internal_qty) / internal_qty) * 100
                 if drift_pct > 1.0:
                     # Partial fill or partial close — auto-correct quantity
+                    # and fetch closed trades for P&L tracking
                     logger.info(
                         f"RECONCILIATION: Position {pos.id} "
                         f"tenant={pos.tenant_id} {pos.broker}/{pos.symbol}: "
                         f"internal={internal_qty:.4f} broker={broker_qty:.4f} "
                         f"drift={drift_pct:.1f}%. Auto-correcting."
                     )
+
+                    # Fetch closed trades for P&L (same logic as full close)
+                    if pos.broker == "oanda":
+                        from app.brokers.oanda import OandaBroker
+                        if isinstance(broker, OandaBroker):
+                            try:
+                                closed_trades = await broker.get_recent_closed_trades(pos.account)
+                                partial_realized = 0.0
+                                for ct in closed_trades:
+                                    if ct["symbol"] != pos.symbol or ct["realized_pl"] == 0:
+                                        continue
+                                    existing = await db.execute(
+                                        select(Order).where(
+                                            Order.tenant_id == pos.tenant_id,
+                                            Order.broker_order_id == f"oanda_close_{ct['trade_id']}",
+                                        )
+                                    )
+                                    if existing.scalar_one_or_none():
+                                        continue
+
+                                    partial_realized += ct["realized_pl"]
+                                    logger.info(
+                                        f"RECONCILIATION: Closed trade {ct['trade_id']} "
+                                        f"{pos.symbol} P&L={ct['realized_pl']:.2f}"
+                                    )
+                                    from datetime import datetime as dt
+                                    close_time = None
+                                    if ct.get("close_time"):
+                                        try:
+                                            close_time = dt.fromisoformat(ct["close_time"].replace("Z", "+00:00"))
+                                        except Exception:
+                                            pass
+                                    close_action = "BUY" if ct["units"] < 0 else "SELL"
+                                    close_order = Order(
+                                        created_at=close_time or datetime.now(timezone.utc),
+                                        updated_at=close_time or datetime.now(timezone.utc),
+                                        tenant_id=pos.tenant_id,
+                                        broker=pos.broker,
+                                        account=pos.account,
+                                        symbol=pos.symbol,
+                                        instrument_type=pos.instrument_type,
+                                        action=close_action,
+                                        order_type="MARKET",
+                                        quantity=abs(ct["units"]),
+                                        multiplier=pos.multiplier,
+                                        status="FILLED",
+                                        filled_quantity=abs(ct["units"]),
+                                        avg_fill_price=ct["close_price"],
+                                        broker_order_id=f"oanda_close_{ct['trade_id']}",
+                                        time_in_force="FOK",
+                                        comment="SL/TP/TSL close (reconciled from Oanda)",
+                                    )
+                                    db.add(close_order)
+
+                                if partial_realized != 0:
+                                    pos.realized_pnl += partial_realized
+                                    now = datetime.now(timezone.utc)
+                                    if pos.daily_pnl_date and pos.daily_pnl_date.date() == now.date():
+                                        pos.daily_realized_pnl += partial_realized
+                                    else:
+                                        pos.daily_realized_pnl = partial_realized
+                                        pos.daily_pnl_date = now
+                                    logger.info(f"RECONCILIATION: Partial close P&L: {partial_realized:.2f}")
+
+                            except Exception:
+                                logger.exception("Error fetching closed trades for partial reconciliation")
+
                     pos.quantity = broker_qty
                     await db.commit()
                 else:

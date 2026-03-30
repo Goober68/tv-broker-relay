@@ -187,7 +187,7 @@ async def list_webhook_deliveries(
     from app.models.webhook_delivery import WebhookDelivery
     from sqlalchemy.orm import outerjoin
     stmt = (
-        select(WebhookDelivery, Order.broker_request, Order.broker_response)
+        select(WebhookDelivery, Order.broker_request, Order.broker_response, Order.error_message)
         .outerjoin(Order, Order.id == WebhookDelivery.order_id)
         .where(WebhookDelivery.tenant_id == tenant.id)
         .order_by(desc(WebhookDelivery.created_at))
@@ -207,14 +207,14 @@ async def list_webhook_deliveries(
             http_status=d.http_status,
             auth_passed=d.auth_passed,
             order_id=d.order_id,
-            error_detail=d.error_detail,
+            error_detail=d.error_detail or order_error,
             duration_ms=d.duration_ms,
             raw_payload=d.raw_payload,
             user_agent=d.user_agent,
             broker_request=broker_request,
             broker_response=broker_response,
         )
-        for d, broker_request, broker_response in rows
+        for d, broker_request, broker_response, order_error in rows
     ]
 
 
@@ -498,6 +498,11 @@ class AccountPnlSummary(BaseModel):
     account: str
     display_name: str | None
     bars: list[PnlBar]
+    # Drawdown tracking
+    max_total_drawdown: float | None = None   # account limit
+    max_daily_drawdown: float | None = None   # account limit
+    current_drawdown: float = 0.0             # from HWM of cumulative realized
+    today_drawdown: float = 0.0               # from today's HWM
 
 
 @router.get("/pnl/summary", response_model=list[AccountPnlSummary])
@@ -569,7 +574,7 @@ async def get_pnl_summary(
                 WHERE tenant_id = :tenant_id
                   AND broker    = :broker
                   AND account   = :account
-                  AND LOWER(status) = 'filled'
+                  AND status IN ('filled', 'FILLED')
                   AND avg_fill_price IS NOT NULL
                   AND filled_quantity > 0
                 ORDER BY created_at ASC
@@ -622,6 +627,15 @@ async def get_pnl_summary(
                     else:
                         # Closing a short: bought at price, sold at lot_price
                         pnl = (lot_price - price) * match_qty * lot_mult
+
+                    # Forex P&L conversion: if the quote currency isn't USD,
+                    # convert P&L to USD using the close price as the rate.
+                    # e.g. USD_JPY: P&L is in JPY, divide by rate to get USD
+                    # e.g. EUR_USD: P&L is already in USD, no conversion needed
+                    sym_clean = sym.replace("_", "").replace("/", "").upper()
+                    if len(sym_clean) == 6 and sym_clean[3:6] != "USD":
+                        if price > 0:
+                            pnl = pnl / price
 
                     realized_events.append((ts, pnl))
 
@@ -692,11 +706,34 @@ async def get_pnl_summary(
                 update={"unrealized_pnl": total_unrealized}
             )
 
+        # Calculate drawdown from high-water mark of ALL-TIME realized P&L
+        all_time_cumulative = 0.0
+        hwm = 0.0
+        today_cumulative = 0.0
+        today_hwm = 0.0
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        for ts, pnl in realized_events:
+            all_time_cumulative += pnl
+            if all_time_cumulative > hwm:
+                hwm = all_time_cumulative
+            if ts >= today_start:
+                today_cumulative += pnl
+                if today_cumulative > today_hwm:
+                    today_hwm = today_cumulative
+
+        current_drawdown = round(hwm - all_time_cumulative, 2)
+        today_drawdown = round(today_hwm - today_cumulative, 2)
+
         summaries.append(AccountPnlSummary(
             broker       = acct.broker,
             account      = acct.account_alias,
             display_name = acct.display_name,
             bars         = bars,
+            max_total_drawdown = acct.max_total_drawdown,
+            max_daily_drawdown = acct.max_daily_drawdown,
+            current_drawdown   = current_drawdown,
+            today_drawdown     = today_drawdown,
         ))
 
     return summaries

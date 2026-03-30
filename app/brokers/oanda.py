@@ -430,6 +430,36 @@ class OandaBroker(BrokerBase):
                 logger.exception(f"Error polling Oanda order {broker_order_id}")
                 return OrderStatusResult(found=False, error_message=str(e))
 
+    async def get_recent_closed_trades(self, account: str, count: int = 50) -> list[dict]:
+        """
+        Fetch recently closed trades from Oanda.
+        Returns list of dicts with: symbol, units, price, realized_pl, close_time, trade_id
+        """
+        account_id = self._resolve_account(account)
+        async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/accounts/{account_id}/trades",
+                    params={"state": "CLOSED", "count": count},
+                )
+                resp.raise_for_status()
+                trades = resp.json().get("trades", [])
+                result = []
+                for t in trades:
+                    result.append({
+                        "trade_id": t.get("id"),
+                        "symbol": t.get("instrument"),
+                        "units": float(t.get("initialUnits", 0)),
+                        "open_price": float(t.get("price", 0)),
+                        "close_price": float(t.get("averageClosePrice", 0)),
+                        "realized_pl": float(t.get("realizedPL", 0)),
+                        "close_time": t.get("closeTime"),
+                    })
+                return result
+            except Exception:
+                logger.exception("Error fetching Oanda closed trades")
+                return []
+
     async def cancel_order(self, broker_order_id: str, account: str) -> bool:
         account_id = self._resolve_account(account)
         async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:

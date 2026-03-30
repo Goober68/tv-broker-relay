@@ -66,7 +66,7 @@ export default function BrokerAccountsPage() {
         action={
           !adding && (
             <button onClick={() => setAdding(true)} className="btn-primary">
-              + Add broker
+              + Account
             </button>
           )
         }
@@ -502,27 +502,25 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
 
   return (
     <div className="panel overflow-hidden">
-      <div
-        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:bg-base-800/30 transition-colors"
-        onClick={onToggle}
-      >
-        <BrokerBadge broker={account.broker} />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-base-100">
-            {account.display_name || `${brokerLabel(account.broker)} / ${account.account_alias}`}
-          </div>
-          <div className="text-xs text-base-400 font-mono mt-0.5">
-            alias: <span className="text-base-300">{account.account_alias}</span>
+      <div className="px-5 py-4 flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={onToggle}>
+          <BrokerBadge broker={account.broker} />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-base-100">
+              {account.display_name || `${brokerLabel(account.broker)} / ${account.account_alias}`}
+            </div>
+            <div className="text-xs text-base-400 font-mono mt-0.5">
+              {account.account_alias}
+            </div>
           </div>
         </div>
-        <span className={`badge ${account.is_active ? 'badge-green' : 'badge-neutral'}`}>
-          {account.is_active ? 'active' : 'inactive'}
-        </span>
-        <span className="text-base-500 text-xs">{expanded ? '▲' : '▼'}</span>
+        <AccountControls account={account} onRefresh={onRefresh} />
+        <span className="text-base-500 text-xs cursor-pointer" onClick={onToggle}>{expanded ? '▲' : '▼'}</span>
       </div>
 
       {expanded && (
         <div className="border-t border-base-800 px-5 py-4 space-y-4 animate-fade-in">
+
           {/* Display name */}
           <div>
             <label className="block text-xs font-medium text-base-400 mb-1.5">Display name</label>
@@ -568,6 +566,9 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
 
           {/* Auto-close settings */}
           <AutoCloseSettings account={account} onRefresh={onRefresh} />
+
+          {/* Drawdown limits */}
+          <DrawdownSettings account={account} onRefresh={onRefresh} />
 
           {/* Import trade history — Tradovate only */}
           {account.broker === 'tradovate' && (
@@ -716,10 +717,164 @@ function AutoCloseSettings({ account, onRefresh }) {
   )
 }
 
+function AccountControls({ account, onRefresh }) {
+  const [suspending, setSuspending] = useState(false)
+  const [flattening, setFlattening] = useState(false)
+  const [confirmFlatten, setConfirmFlatten] = useState(false)
+  const [flattenResult, setFlattenResult] = useState(null)
+
+  const handleToggleSuspend = async () => {
+    setSuspending(true)
+    try {
+      await brokersApi.suspend(account.id, !account.is_active)
+      onRefresh()
+    } catch {}
+    finally { setSuspending(false) }
+  }
+
+  const handleFlatten = async () => {
+    setFlattening(true)
+    setFlattenResult(null)
+    try {
+      const data = await brokersApi.flatten(account.id)
+      setFlattenResult(data)
+      setConfirmFlatten(false)
+    } catch (err) {
+      setFlattenResult({ errors: [err.detail || 'Flatten failed'] })
+    }
+    finally { setFlattening(false) }
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={handleToggleSuspend}
+        disabled={suspending}
+        className={`text-[10px] py-1 px-2 rounded font-medium transition-colors ${
+          account.is_active
+            ? 'bg-warn/10 border border-warn/30 text-warn hover:bg-warn/20'
+            : 'bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20'
+        }`}
+      >
+        {suspending ? '...' : account.is_active ? 'Pause' : 'Resume'}
+      </button>
+
+      {confirmFlatten ? (
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleFlatten}
+            disabled={flattening}
+            className="text-[10px] py-1 px-2 rounded font-medium bg-loss/20 border border-loss/40 text-loss hover:bg-loss/30"
+          >
+            {flattening ? 'Closing...' : 'Confirm'}
+          </button>
+          <button onClick={() => setConfirmFlatten(false)} className="text-[10px] text-base-500 hover:text-base-300">
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirmFlatten(true)}
+          className="text-[10px] py-1 px-2 rounded font-medium bg-loss/10 border border-loss/30 text-loss hover:bg-loss/20 transition-colors"
+        >
+          Flatten
+        </button>
+      )}
+
+      {flattenResult && (
+        <span className={`text-[10px] font-mono ${flattenResult.errors?.length ? 'text-loss' : 'text-accent'}`}>
+          {flattenResult.closed != null
+            ? `${flattenResult.closed}/${flattenResult.total} closed`
+            : flattenResult.errors?.[0]}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function DrawdownSettings({ account, onRefresh }) {
+  const [totalDD, setTotalDD] = useState(account.max_total_drawdown ?? '')
+  const [dailyDD, setDailyDD] = useState(account.max_daily_drawdown ?? '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setTotalDD(account.max_total_drawdown ?? '')
+    setDailyDD(account.max_daily_drawdown ?? '')
+  }, [account.max_total_drawdown, account.max_daily_drawdown])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await brokersApi.updateDrawdown(account.id, {
+        max_total_drawdown: totalDD === '' ? null : parseFloat(totalDD),
+        max_daily_drawdown: dailyDD === '' ? null : parseFloat(dailyDD),
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onRefresh()
+    } catch {}
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="border-t border-base-800 pt-4">
+      <p className="text-xs font-medium text-base-300 mb-3">Drawdown limits</p>
+      <div className="flex items-end gap-4">
+        <div>
+          <label className="block text-[10px] text-base-500 mb-1">Max total drawdown ($)</label>
+          <input
+            className="input py-1 text-xs font-mono w-28"
+            type="number" step="0.01" min="0"
+            placeholder="e.g. 2500"
+            value={totalDD}
+            onChange={e => setTotalDD(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] text-base-500 mb-1">Max daily drawdown ($)</label>
+          <input
+            className="input py-1 text-xs font-mono w-28"
+            type="number" step="0.01" min="0"
+            placeholder="e.g. 1500"
+            value={dailyDD}
+            onChange={e => setDailyDD(e.target.value)}
+          />
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="btn-primary text-xs py-1 px-3"
+        >
+          {saving ? 'Saving…' : saved ? '✓' : 'Save'}
+        </button>
+      </div>
+      <p className="text-[10px] text-base-500 mt-2">
+        Leave blank if this account has no drawdown limits.
+      </p>
+    </div>
+  )
+}
+
 function ImportHistory({ accountId }) {
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setError(null)
+    setResult(null)
+    try {
+      const data = await brokersApi.syncHistory(accountId)
+      setResult(data)
+    } catch (err) {
+      setError(err.detail || 'Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   const handleCsvUpload = async (e) => {
     const file = e.target.files?.[0]
@@ -734,9 +889,11 @@ function ImportHistory({ accountId }) {
       setError(err.detail || 'CSV import failed')
     } finally {
       setLoading(false)
-      e.target.value = ''  // reset file input
+      e.target.value = ''
     }
   }
+
+  const busy = loading || syncing
 
   return (
     <div className="border-t border-base-800 pt-4">
@@ -744,18 +901,28 @@ function ImportHistory({ accountId }) {
         <div>
           <p className="text-xs font-medium text-base-300">Import trade history</p>
           <p className="text-xs text-base-500 mt-0.5">
-            Upload a Tradovate CSV export (Orders tab → Export)
+            Sync from Tradovate or upload a CSV export
           </p>
         </div>
-        <label className={`btn-primary text-xs py-1.5 px-3 flex items-center gap-2 cursor-pointer ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
-          {loading && <Spinner size="sm" />}
-          {loading ? 'Importing…' : 'Upload CSV'}
-          <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
-        </label>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSync}
+            disabled={busy}
+            className="btn-primary text-xs py-1.5 px-3 flex items-center gap-2"
+          >
+            {syncing && <Spinner size="sm" />}
+            {syncing ? 'Syncing…' : 'Sync fills'}
+          </button>
+          <label className={`btn-ghost text-xs py-1.5 px-3 flex items-center gap-2 cursor-pointer ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+            {loading && <Spinner size="sm" />}
+            {loading ? 'Importing…' : 'Upload CSV'}
+            <input type="file" accept=".csv" onChange={handleCsvUpload} className="hidden" />
+          </label>
+        </div>
       </div>
       {result && (
         <div className="mt-2 text-xs font-mono text-accent">
-          Imported {result.imported} fills ({result.skipped} duplicates skipped)
+          {result.message || `Imported ${result.imported} fills (${result.skipped || 0} duplicates skipped)`}
           {result.errors?.length > 0 && (
             <span className="text-loss ml-2">({result.errors.length} errors)</span>
           )}

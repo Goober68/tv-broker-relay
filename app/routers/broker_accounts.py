@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Literal
@@ -9,6 +9,7 @@ from typing import Literal
 from app.models.db import get_db
 from app.models.tenant import Tenant
 from app.config import get_settings
+from app.brokers.registry import get_broker_for_tenant
 from app.models.broker_account import BROKER_CREDENTIAL_FIELDS, BrokerAccount
 from app.dependencies.auth import get_current_tenant
 from app.services.broker_accounts import (
@@ -75,6 +76,8 @@ class BrokerAccountOut(BaseModel):
     auto_close_time: str | None = None
     fifo_randomize: bool = False
     fifo_max_offset: int = 3
+    max_total_drawdown: float | None = None
+    max_daily_drawdown: float | None = None
     created_at: datetime
     updated_at: datetime
     # Redacted credential summary — never returns raw secrets
@@ -101,6 +104,8 @@ def _to_out(account) -> BrokerAccountOut:
         auto_close_time=account.auto_close_time,
         fifo_randomize=account.fifo_randomize,
         fifo_max_offset=account.fifo_max_offset,
+        max_total_drawdown=account.max_total_drawdown,
+        max_daily_drawdown=account.max_daily_drawdown,
         created_at=account.created_at,
         updated_at=account.updated_at,
         credential_summary=summary,
@@ -302,13 +307,13 @@ async def import_trade_history(
             broker="tradovate",
             account=account.account_alias,
             symbol=contract,
-            instrument_type="future",
-            action=action_str,
-            order_type=ot,
+            instrument_type="FUTURE",
+            action=action_str.upper(),
+            order_type=ot.upper(),
             quantity=qty,
             price=float(order_data.get("price")) if order_data.get("price") else None,
             multiplier=multiplier,
-            status="filled",
+            status="FILLED",
             filled_quantity=qty,
             avg_fill_price=price,
             broker_order_id=fill_id,
@@ -430,13 +435,13 @@ async def import_csv_history(
                 broker=account.broker,
                 account=account.account_alias,
                 symbol=contract,
-                instrument_type="future",
-                action=action_str,
-                order_type=ot,
+                instrument_type="FUTURE",
+                action=action_str.upper(),
+                order_type=ot.upper(),
                 quantity=filled_qty,
                 price=price,
                 multiplier=multiplier,
-                status="filled",
+                status="FILLED",
                 filled_quantity=filled_qty,
                 avg_fill_price=avg_price,
                 broker_order_id=order_id,
@@ -456,6 +461,151 @@ async def import_csv_history(
     if errors:
         result["errors"] = errors[:10]
     return result
+
+
+@router.post("/{account_id}/sync-history")
+async def sync_trade_history(
+    account_id: int,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch historical trade data via Tradovate WebSocket sync.
+    Falls back to REST API if WebSocket fails.
+    """
+    from app.services.credentials import decrypt_credentials
+    from app.services.tradovate_sync import sync_fills
+    from app.models.order import (
+        Order, OrderStatus, OrderAction, OrderType,
+        InstrumentType, DEFAULT_FUTURES_MULTIPLIERS,
+    )
+
+    account = await get_broker_account(db, account_id, tenant.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+    if account.broker != "tradovate":
+        raise HTTPException(status_code=400, detail="Sync is only supported for Tradovate accounts")
+
+    creds = decrypt_credentials(account.credentials_encrypted)
+    token = creds.get("access_token")
+    base_url = creds.get("base_url", "https://live.tradovateapi.com/v1")
+    if not token:
+        raise HTTPException(status_code=400, detail="No access token — reconnect via OAuth")
+
+    # Get numeric account ID
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            acct_resp = await client.get(
+                f"{base_url}/account/list",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if acct_resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="Token expired — reconnect via OAuth")
+            acct_resp.raise_for_status()
+            accounts = acct_resp.json()
+            numeric_id = None
+            for a in accounts:
+                if a["name"] == account.account_alias:
+                    numeric_id = a["id"]
+                    break
+            if numeric_id is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Account {account.account_alias} not found in Tradovate account list"
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch account list: {str(e)}")
+
+    # Try WebSocket sync
+    fills, orders_by_id = await sync_fills(base_url, token, numeric_id, account.account_alias)
+
+    if not fills and not orders_by_id:
+        return {
+            "imported": 0,
+            "method": "websocket",
+            "message": "No historical data returned. Use CSV upload for historical trade import.",
+        }
+
+    # Get existing broker_order_ids to skip duplicates
+    existing = await db.execute(
+        select(Order.broker_order_id).where(
+            Order.tenant_id == tenant.id,
+            Order.broker == "tradovate",
+            Order.account == account.account_alias,
+            Order.broker_order_id.isnot(None),
+        )
+    )
+    existing_ids = {r[0] for r in existing.fetchall()}
+
+    imported = 0
+    skipped = 0
+
+    # Process fills
+    for fill in fills:
+        fill_id = str(fill.get("id", fill.get("orderId", "")))
+        if fill_id in existing_ids:
+            skipped += 1
+            continue
+
+        order_id = fill.get("orderId")
+        order_data = orders_by_id.get(order_id, {})
+        action_str = (order_data.get("action") or fill.get("action", "")).lower()
+        if action_str not in ("buy", "sell"):
+            continue
+
+        contract = order_data.get("contractName") or fill.get("contractName", "")
+        root = ''.join(c for c in contract if c.isalpha())
+        multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
+
+        price = float(fill.get("price", 0))
+        qty = float(fill.get("qty", fill.get("filledQty", 0)))
+        if price == 0 or qty == 0:
+            continue
+
+        ts_str = fill.get("timestamp", "")
+        try:
+            from datetime import datetime as dt, timezone as tz
+            ts = dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except:
+            continue
+
+        order_type_str = (order_data.get("orderType") or "Market").lower()
+        ot = "market" if "market" in order_type_str else "limit" if "limit" in order_type_str else "stop"
+
+        order = Order(
+            created_at=ts,
+            updated_at=ts,
+            tenant_id=tenant.id,
+            broker="tradovate",
+            account=account.account_alias,
+            symbol=contract,
+            instrument_type="FUTURE",
+            action=action_str.upper(),
+            order_type=ot.upper(),
+            quantity=qty,
+            price=float(order_data.get("price")) if order_data.get("price") else None,
+            multiplier=multiplier,
+            status="FILLED",
+            filled_quantity=qty,
+            avg_fill_price=price,
+            broker_order_id=fill_id,
+            time_in_force="GTC",
+        )
+        db.add(order)
+        imported += 1
+        existing_ids.add(fill_id)
+
+    await db.commit()
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "method": "websocket",
+        "total_fills": len(fills),
+        "total_orders": len(orders_by_id),
+    }
 
 
 class DisplayNameUpdate(BaseModel):
@@ -836,4 +986,134 @@ async def update_auto_close(
         "id":                   account.id,
         "auto_close_enabled":   account.auto_close_enabled,
         "auto_close_time":      account.auto_close_time,
+    }
+
+
+class SuspendUpdate(BaseModel):
+    is_active: bool
+
+
+@router.patch("/{account_id}/suspend", status_code=200)
+async def toggle_suspend(
+    account_id: int,
+    body: SuspendUpdate,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Suspend or resume webhook relay for a broker account."""
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.id == account_id,
+            BrokerAccount.tenant_id == tenant.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+    account.is_active = body.is_active
+    await db.commit()
+    return {"id": account.id, "is_active": account.is_active}
+
+
+@router.post("/{account_id}/flatten", status_code=200)
+async def flatten_positions(
+    account_id: int,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Close all open positions on a broker account by submitting CLOSE orders."""
+    from app.models.position import Position
+    from app.models.order import Order, OrderStatus, OrderAction, OrderType
+
+    account = await get_broker_account(db, account_id, tenant.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+
+    # Find open positions
+    pos_result = await db.execute(
+        select(Position).where(
+            Position.tenant_id == tenant.id,
+            Position.broker == account.broker,
+            Position.account == account.account_alias,
+            func.abs(Position.quantity) > 1e-9,
+        )
+    )
+    open_positions = pos_result.scalars().all()
+
+    if not open_positions:
+        return {"closed": 0, "message": "No open positions"}
+
+    # Get broker adapter
+    broker = await get_broker_for_tenant(
+        account.broker, account.account_alias, tenant.id, db
+    )
+
+    closed = 0
+    errors = []
+    for pos in open_positions:
+        try:
+            # Create a close order
+            order = Order(
+                tenant_id=tenant.id,
+                broker=account.broker,
+                account=account.account_alias,
+                symbol=pos.symbol,
+                instrument_type=pos.instrument_type,
+                action=OrderAction.CLOSE,
+                order_type=OrderType.MARKET,
+                quantity=abs(pos.quantity),
+                multiplier=pos.multiplier,
+                status=OrderStatus.SUBMITTED,
+                time_in_force="FOK",
+            )
+            db.add(order)
+            await db.flush()
+
+            result = await broker.submit_order(order)
+            if result.success:
+                order.status = OrderStatus.FILLED
+                order.broker_order_id = result.broker_order_id
+                closed += 1
+            else:
+                order.status = OrderStatus.REJECTED
+                order.error_message = result.error_message
+                errors.append(f"{pos.symbol}: {result.error_message}")
+        except Exception as e:
+            errors.append(f"{pos.symbol}: {str(e)}")
+
+    await db.commit()
+    resp = {"closed": closed, "total": len(open_positions)}
+    if errors:
+        resp["errors"] = errors
+    return resp
+
+
+class DrawdownUpdate(BaseModel):
+    max_total_drawdown: float | None = None
+    max_daily_drawdown: float | None = None
+
+
+@router.patch("/{account_id}/drawdown-limits", status_code=200)
+async def update_drawdown_limits(
+    account_id: int,
+    body: DrawdownUpdate,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.id == account_id,
+            BrokerAccount.tenant_id == tenant.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Broker account not found")
+    account.max_total_drawdown = body.max_total_drawdown
+    account.max_daily_drawdown = body.max_daily_drawdown
+    await db.commit()
+    return {
+        "id": account.id,
+        "max_total_drawdown": account.max_total_drawdown,
+        "max_daily_drawdown": account.max_daily_drawdown,
     }

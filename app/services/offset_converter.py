@@ -68,6 +68,11 @@ def _pip_size(symbol: str) -> float:
     return 0.0001
 
 
+def _pipette_size(symbol: str) -> float:
+    """Return pipette size (1/10th of a pip) for a forex symbol."""
+    return _pip_size(symbol) / 10
+
+
 def _tick_size(symbol: str) -> float:
     """Return tick size for a futures symbol, stripping contract month."""
     sym = symbol.upper().strip()
@@ -194,11 +199,11 @@ def convert_sl_tp(
     is_buy = action.lower() == "buy"
 
     # Auto-remap mismatched sl_tp_type for the instrument:
-    #   futures must use ticks (not pips), forex must use pips (not ticks)
+    #   futures must use ticks (not pips/pipettes), forex must use pips/pipettes (not ticks)
     remapped_sl_tp_type = sl_tp_type
-    if sl_tp_type == "pips" and instrument_type == "future":
+    if sl_tp_type in ("pips", "pipettes") and instrument_type == "future":
         logger.warning(
-            f"{symbol}: sl_tp_type='pips' is invalid for futures — "
+            f"{symbol}: sl_tp_type='{sl_tp_type}' is invalid for futures — "
             f"auto-remapping to 'ticks'"
         )
         remapped_sl_tp_type = "ticks"
@@ -265,6 +270,18 @@ def convert_sl_tp(
             logger.debug(f"{symbol} {field}: {value} pips × {pip} = {offset:.6f} → {result:.6f}")
             return round(result, 6), True
 
+        elif effective_type == "pipettes":
+            pipette = _pipette_size(symbol)
+            offset = value * pipette
+            if field == "stop_loss":
+                result = base - offset if is_buy else base + offset
+            elif field == "take_profit":
+                result = base + offset if is_buy else base - offset
+            else:
+                result = offset
+            logger.debug(f"{symbol} {field}: {value} pipettes × {pipette} = {offset:.6f} → {result:.6f}")
+            return round(result, 6), True
+
         else:  # points — raw price offset
             if field == "stop_loss":
                 result = base - value if is_buy else base + value
@@ -298,9 +315,14 @@ def convert_sl_tp(
             return value * _tick_size(symbol)
         if remapped_sl_tp_type == "pips":
             return value * _pip_size(symbol)
+        if remapped_sl_tp_type == "pipettes":
+            return value * _pipette_size(symbol)
         return value  # points — already a price distance
 
-    tt = trail_trigger  # always absolute price level
+    # trail_trigger is a price level where the trailing stop activates.
+    # If sl_tp_type is set, convert from offset to absolute (same as take_profit direction).
+    tt, _ = (to_absolute(trail_trigger, "take_profit")
+             if trail_trigger is not None else (None, False))
     td = to_distance(trail_dist)    if trail_dist    is not None else None
     tu = to_distance(trail_update)  if trail_update  is not None else None
 

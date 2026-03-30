@@ -75,11 +75,12 @@ class WebhookPayload(BaseModel):
     # trail_trigger, trail_dist, and trail_update are interpreted.
     # If omitted, the relay infers the type from instrument_type (legacy behaviour).
     #
-    #   "absolute" — price levels (e.g. 1.07500, 148.750, 20900.0)
-    #   "ticks"    — number of ticks from entry (futures only, e.g. 20 ticks on NQ = 5 pts)
-    #   "pips"     — number of pips from entry (forex only, e.g. 50 pips on EUR_USD = 0.0050)
-    #   "points"   — raw price points from entry (any instrument, e.g. 2.50)
-    sl_tp_type: Literal["absolute", "ticks", "pips", "points"] | None = None
+    #   "absolute"  — price levels (e.g. 1.07500, 148.750, 20900.0)
+    #   "ticks"     — number of ticks from entry (futures only, e.g. 20 ticks on NQ = 5 pts)
+    #   "pips"      — number of pips from entry (forex, e.g. 50 pips on EUR_USD = 0.0050)
+    #   "pipettes"  — number of pipettes from entry (forex, 1/10th pip, e.g. 500 pipettes = 50 pips)
+    #   "points"    — raw price points from entry (any instrument, e.g. 2.50)
+    sl_tp_type: Literal["absolute", "ticks", "pips", "pipettes", "points"] | None = None
 
     @field_validator("symbol")
     @classmethod

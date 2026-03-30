@@ -154,12 +154,16 @@ export const brokerAccounts = {
   deleteInstrument:(id, sym)     => api.delete(`/api/broker-accounts/${id}/instruments/${sym}`),
   updateDisplayName:(id, name)    => api.patch(`/api/broker-accounts/${id}/display-name`, { display_name: name }),
   importHistory:    (id)          => api.post(`/api/broker-accounts/${id}/import-history`),
+  syncHistory:      (id)          => api.post(`/api/broker-accounts/${id}/sync-history`),
   importCsv:        (id, file)    => {
     const form = new FormData()
     form.append('file', file)
     return request(`/api/broker-accounts/${id}/import-csv`, { method: 'POST', body: form })
   },
   updateAutoClose: (id, body)    => api.patch(`/api/broker-accounts/${id}/auto-close`, body),
+  updateDrawdown:  (id, body)    => api.patch(`/api/broker-accounts/${id}/drawdown-limits`, body),
+  suspend:         (id, active)  => api.patch(`/api/broker-accounts/${id}/suspend`, { is_active: active }),
+  flatten:         (id)          => api.post(`/api/broker-accounts/${id}/flatten`),
   updateFifo:      (id, body)    => api.patch(`/api/broker-accounts/${id}/fifo`, body),
   tradovateFetchAccounts: (creds) => api.post('/api/broker-accounts/tradovate/fetch-accounts', { credentials: creds }),
   tradovateOAuthUrl:      (env = 'live') => api.get(`/api/broker-accounts/tradovate/oauth-url?env=${env}`),

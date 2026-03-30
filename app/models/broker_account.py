@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Index, Integer
+from sqlalchemy import String, Boolean, DateTime, Float, ForeignKey, Text, JSON, UniqueConstraint, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
@@ -76,9 +76,12 @@ class BrokerAccount(Base):
     fifo_max_offset: Mapped[int]        = mapped_column(Integer, default=3)
 
     # Auto-close configuration — for prop firm session-end compliance
-    # auto_close_time: "HH:MM" in ET (e.g. "16:50" = 4:50 PM ET = 10 min before 5 PM roll)
     auto_close_enabled: Mapped[bool]        = mapped_column(Boolean, default=False)
     auto_close_time:    Mapped[str | None]  = mapped_column(String(5), nullable=True)  # "HH:MM" ET
+
+    # Prop firm drawdown limits (nullable = not a prop account or no limits set)
+    max_total_drawdown:  Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 2500.00
+    max_daily_drawdown:  Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 1500.00
 
     tenant: Mapped["Tenant"] = relationship(back_populates="broker_accounts")  # type: ignore
 

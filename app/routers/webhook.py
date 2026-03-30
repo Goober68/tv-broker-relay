@@ -199,6 +199,7 @@ async def receive_webhook(
         raw_payload=_safe_payload_str(payload, raw_body),
         http_status=200, auth_passed=True,
         outcome=order.status.value,
+        error_detail=order.error_message if order.status.value in ("rejected", "error") else None,
         order_id=order.id,
         duration_ms=duration_ms,
     )

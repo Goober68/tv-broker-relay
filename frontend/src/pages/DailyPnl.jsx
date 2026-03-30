@@ -111,7 +111,7 @@ export default function PnlPage() {
                   <th className="text-right font-medium px-3 py-2.5 w-24">Unrealized</th>
                   <th className="text-right font-medium px-3 py-2.5 w-28">{current.colLabel} Total</th>
                   <th className="text-right font-medium px-3 py-2.5 w-14">Fills</th>
-                  <th className="text-right font-medium px-3 py-2.5 w-14">Open</th>
+                  <th className="text-right font-medium px-3 py-2.5 w-40">Drawdown Remaining</th>
                   <th className="text-center font-medium px-2 py-2.5 w-44">
                     {period === 'today' ? 'Intraday' : 'Trend'}
                   </th>
@@ -146,8 +146,8 @@ export default function PnlPage() {
                       <td className="text-right px-3 py-2.5 font-mono text-base-400">
                         {orderCount}
                       </td>
-                      <td className="text-right px-3 py-2.5 font-mono text-base-400">
-                        {ap.openCount}
+                      <td className="text-right px-3 py-2.5">
+                        <DrawdownCell account={account} />
                       </td>
                       <td className="px-2 py-2.5">
                         <Sparkline bars={account.bars} period={period} />
@@ -160,6 +160,39 @@ export default function PnlPage() {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+function DrawdownCell({ account }) {
+  const hasLimits = account.max_total_drawdown || account.max_daily_drawdown
+  if (!hasLimits) {
+    return <span className="text-[10px] text-base-600 font-mono">—</span>
+  }
+
+  const ddBar = (used, limit, label) => {
+    const remaining = Math.max(limit - used, 0)
+    const remainPct = Math.max((remaining / limit) * 100, 0)
+    // Continuous color: green (120) → yellow (60) → red (0) via HSL hue
+    const hue = Math.round((remainPct / 100) * 120)
+    const barColor = `hsl(${hue}, 80%, 50%)`
+    const textColor = remainPct < 10 ? 'text-loss' : remainPct < 25 ? 'text-warn' : 'text-base-400'
+    return (
+      <div className="flex items-center gap-1.5">
+        <div className="w-16 h-1.5 bg-base-700 rounded-full overflow-hidden">
+          <div className="h-full rounded-full transition-all" style={{ width: `${remainPct}%`, backgroundColor: barColor }} />
+        </div>
+        <span className={`font-mono text-[10px] ${textColor}`} style={remainPct < 50 ? { color: barColor } : {}}>
+          ${remaining.toFixed(0)}{label ? ` ${label}` : ''}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1">
+      {account.max_total_drawdown != null && ddBar(account.current_drawdown, account.max_total_drawdown, '')}
+      {account.max_daily_drawdown != null && ddBar(account.today_drawdown, account.max_daily_drawdown, 'day')}
     </div>
   )
 }
