@@ -1,11 +1,9 @@
 """
 API key service.
 
-Key format:  tvr_{tenant_id}_{48 url-safe random bytes}
-  - "tvr_" prefix — identifiable in configs/logs
-  - tenant_id embedded — lets us route to the right tenant without a DB lookup
-    (we still verify against the DB; this is just for routing convenience)
-  - 48 random bytes — 384 bits of entropy, unguessable
+Key format:  32-character hex string (128 bits of entropy)
+  - Clean, simple, easy to paste into TradingView webhook payloads
+  - No prefix or embedded data — tenant routing via DB lookup
 
 Storage: SHA-256 hash stored in DB. Raw key returned once at creation only.
 Lookup: hash the presented key, query by hash. O(1), constant-time compare.
@@ -22,8 +20,7 @@ from app.models.api_key import ApiKey
 
 
 def _generate_raw_key(tenant_id: uuid.UUID) -> str:
-    random_part = secrets.token_urlsafe(48)
-    return f"tvr_{tenant_id}_{random_part}"
+    return secrets.token_hex(16)  # 32-char hex string, 128 bits
 
 
 def _hash_key(raw: str) -> str:
@@ -31,8 +28,8 @@ def _hash_key(raw: str) -> str:
 
 
 def _key_prefix(raw: str) -> str:
-    """First 16 chars — enough to identify the key in a list, not enough to brute-force."""
-    return raw[:16] + "..."
+    """First 8 chars — enough to identify the key in a list."""
+    return raw[:8] + "..."
 
 
 async def create_api_key(

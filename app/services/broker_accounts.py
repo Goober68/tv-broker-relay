@@ -38,6 +38,7 @@ async def create_broker_account(
     auto_close_time: str | None = None,
     fifo_randomize: bool = False,
     fifo_max_offset: int = 3,
+    account_type: str | None = None,
 ) -> BrokerAccount:
     _validate_credentials(broker, credentials)
 
@@ -65,6 +66,7 @@ async def create_broker_account(
         auto_close_time=auto_close_time if auto_close_enabled else None,
         fifo_randomize=fifo_randomize,
         fifo_max_offset=fifo_max_offset,
+        account_type=account_type,
     )
     db.add(account)
     await db.flush()

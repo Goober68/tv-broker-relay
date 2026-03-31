@@ -267,3 +267,14 @@ async def get_stats(
         "tenants_by_plan": plan_counts,
         "total_orders": total_orders,
     }
+
+
+@router.post("/trigger-reconcile")
+async def trigger_reconcile(
+    _admin: Tenant = Depends(require_admin),
+):
+    """Trigger an immediate reconciliation cycle (includes Tradovate fill sync)."""
+    import asyncio
+    from app.services.background_tasks import _reconcile_once
+    asyncio.create_task(_reconcile_once())
+    return {"status": "triggered"}

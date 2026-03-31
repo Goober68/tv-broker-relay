@@ -147,6 +147,7 @@ class Order(Base):
     broker_quantity:   Mapped[float | None] = mapped_column(Float, nullable=True)        # actual quantity sent to broker (may differ due to FIFO randomization)
     filled_quantity: Mapped[float]       = mapped_column(Float, default=0.0)
     avg_fill_price:  Mapped[float | None] = mapped_column(Float, nullable=True)
+    commission:      Mapped[float | None] = mapped_column(Float, nullable=True)  # per-contract commission from broker
 
     # Algo tracking
     algo_id:       Mapped[str | None] = mapped_column(String(64), nullable=True)

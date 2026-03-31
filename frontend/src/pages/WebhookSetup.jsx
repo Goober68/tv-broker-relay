@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../lib/auth-context'
-import { apiKeys as apiKeysApi, orders as ordersApi } from '../lib/api'
+import { apiKeys as apiKeysApi, orders as ordersApi, brokerAccounts as brokerAccountsApi } from '../lib/api'
 import { useApi, usePolling } from '../hooks/useApi'
 import { useEventSource } from '../hooks/useEventSource'
 import { PageSpinner, SectionHeader, StatusBadge, CopyButton, Alert, EmptyState } from '../components/ui'
@@ -9,9 +9,14 @@ export default function WebhookSetupPage() {
   const { user } = useAuth()
   const [page, setPage] = useState(0)
   const [inspecting, setInspecting] = useState(null) // delivery id being inspected
+  const [accountFilter, setAccountFilter] = useState('all')
+  const [dateFilter, setDateFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const PAGE_SIZE = 25
 
   const { data: keys, loading: keysLoading } = useApi(() => apiKeysApi.list())
+  const { data: accounts } = useApi(() => brokerAccountsApi.list())
   const { data: deliveries, loading: dlLoading, refetch } = usePolling(
     () => ordersApi.deliveries({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
     30_000,  // fallback poll every 30s — SSE handles instant updates
@@ -27,7 +32,7 @@ export default function WebhookSetupPage() {
   const webhookUrl = `${window.location.origin}/webhook/${tenantId}`
 
   const examplePayload = activeKey ? JSON.stringify({
-    secret: activeKey.key_prefix + "... (your full key)",
+    secret: activeKey.key_prefix + " (use your full key)",
     broker: "oanda",
     account: "primary",
     action: "{{strategy.order.action}}",
@@ -90,6 +95,51 @@ export default function WebhookSetupPage() {
         <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
           <h2 className="font-display font-semibold text-base-100">Recent deliveries</h2>
           <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-base-400">
+              <span>Filter by:</span>
+              <select
+                value={accountFilter}
+                onChange={e => { setAccountFilter(e.target.value); setPage(0) }}
+                className="bg-base-800 border border-base-700 rounded px-2 py-1 text-xs text-base-200 font-mono focus:outline-none focus:border-accent"
+              >
+                <option value="all">All accounts</option>
+                {accounts?.map(a => (
+                  <option key={a.id} value={a.account_alias}>
+                    {a.display_name || `${a.broker}/${a.account_alias}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-base-400">
+              <span>Date:</span>
+              <select
+                value={dateFilter}
+                onChange={e => { setDateFilter(e.target.value); setPage(0) }}
+                className="bg-base-800 border border-base-700 rounded px-2 py-1 text-xs text-base-200 font-mono focus:outline-none focus:border-accent"
+              >
+                <option value="all">All time</option>
+                <option value="today">Today</option>
+                <option value="week">This week</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </label>
+            {dateFilter === 'custom' && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => { setDateFrom(e.target.value); setPage(0) }}
+                  className="bg-base-800 border border-base-700 rounded px-2 py-1 text-xs text-base-200 font-mono focus:outline-none focus:border-accent"
+                />
+                <span className="text-xs text-base-500">to</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => { setDateTo(e.target.value); setPage(0) }}
+                  className="bg-base-800 border border-base-700 rounded px-2 py-1 text-xs text-base-200 font-mono focus:outline-none focus:border-accent"
+                />
+              </div>
+            )}
             <span className="text-xs text-base-500">Click a row to inspect</span>
             {/* Paging controls */}
             <div className="flex items-center gap-1">
@@ -118,11 +168,43 @@ export default function WebhookSetupPage() {
           <div className="flex justify-center py-10"><PageSpinner /></div>
         ) : !deliveries?.length ? (
           <EmptyState icon="📡" title="No deliveries yet" description="Fire a test alert from TradingView to see it here." />
-        ) : (
-          <div className="divide-y divide-base-800">
-            {deliveries.map(d => <DeliveryRow key={d.id} delivery={d} inspecting={inspecting} setInspecting={setInspecting} />)}
-          </div>
-        )}
+        ) : (() => {
+          let filtered = deliveries
+          if (accountFilter !== 'all') {
+            filtered = filtered.filter(d => {
+              try {
+                const p = JSON.parse(d.raw_payload || '{}')
+                return (p.account || 'primary') === accountFilter
+              } catch { return false }
+            })
+          }
+          if (dateFilter !== 'all') {
+            const now = new Date()
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+            filtered = filtered.filter(d => {
+              const t = new Date(d.created_at)
+              if (dateFilter === 'today') return t >= startOfDay
+              if (dateFilter === 'week') {
+                const dayOfWeek = now.getDay() || 7
+                const startOfWeek = new Date(startOfDay)
+                startOfWeek.setDate(startOfWeek.getDate() - (dayOfWeek - 1))
+                return t >= startOfWeek
+              }
+              if (dateFilter === 'custom') {
+                if (dateFrom && t < new Date(dateFrom + 'T00:00:00')) return false
+                if (dateTo && t > new Date(dateTo + 'T23:59:59.999')) return false
+              }
+              return true
+            })
+          }
+          return filtered.length ? (
+            <div className="divide-y divide-base-800">
+              {filtered.map(d => <DeliveryRow key={d.id} delivery={d} inspecting={inspecting} setInspecting={setInspecting} />)}
+            </div>
+          ) : (
+            <EmptyState icon="📡" title="No matching deliveries" description="Try adjusting your filters." />
+          )
+        })()}
       </section>
     </div>
   )

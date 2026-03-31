@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { pnl as pnlApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
-import { PageSpinner, SectionHeader, EmptyState, brokerLabel } from '../components/ui'
+import { PageSpinner, SectionHeader, EmptyState, brokerLabel, BrokerIcon } from '../components/ui'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, Cell, Legend,
@@ -126,12 +126,15 @@ function AccountPnlCard({ account, period, view }) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-base-800">
         <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-base-100">
-              {account.display_name || `${brokerLabel(account.broker)} / ${account.account}`}
-            </div>
-            <div className="text-xs text-base-500 font-mono mt-0.5">
-              {brokerLabel(account.broker)} · {account.account}
+          <div className="flex items-center gap-2">
+            <BrokerIcon broker={account.broker} size={20} />
+            <div>
+              <div className="text-sm font-medium text-base-100">
+                {account.display_name || `${brokerLabel(account.broker)} / ${account.account}`}
+              </div>
+              <div className="text-xs text-base-500 font-mono mt-0.5">
+                {brokerLabel(account.broker)} · {account.account}
+              </div>
             </div>
           </div>
           <div className="text-right">
@@ -146,6 +149,22 @@ function AccountPnlCard({ account, period, view }) {
             </div>
           </div>
         </div>
+        {account.drawdown_remaining != null && (
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-base-800/50">
+            <span className="text-[10px] text-base-500">Drawdown remaining</span>
+            <span className={clsx(
+              'text-xs font-mono font-semibold',
+              account.drawdown_remaining > (account.max_total_drawdown || 0) * 0.5 ? 'text-accent'
+                : account.drawdown_remaining > (account.max_total_drawdown || 0) * 0.25 ? 'text-warn'
+                : 'text-loss'
+            )}>
+              ${account.drawdown_remaining.toFixed(2)}
+              {account.max_total_drawdown != null && (
+                <span className="text-base-600 font-normal"> / ${account.max_total_drawdown.toFixed(0)}</span>
+              )}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Chart */}

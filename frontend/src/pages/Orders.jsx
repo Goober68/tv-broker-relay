@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { orders as ordersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
 import {
-  PageSpinner, SectionHeader, StatusBadge, Mono, EmptyState, brokerLabel
+  PageSpinner, SectionHeader, StatusBadge, Mono, EmptyState, brokerLabel, BrokerIcon
 } from '../components/ui'
 
 const BROKERS  = ['', 'oanda', 'ibkr', 'tradovate', 'etrade']
@@ -159,7 +159,10 @@ function OrderRow({ order }) {
           </Mono>
         </td>
         <td>
-          <span className="text-xs text-base-400">{brokerLabel(order.broker)}</span>
+          <span className="flex items-center gap-1 text-xs text-base-400">
+            <BrokerIcon broker={order.broker} size={12} />
+            {brokerLabel(order.broker)}
+          </span>
           <div className="text-[10px] font-mono text-base-600">{order.account}</div>
         </td>
         <td><StatusBadge status={order.status} /></td>

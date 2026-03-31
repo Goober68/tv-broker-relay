@@ -5,6 +5,19 @@ from sqlalchemy import select, func
 from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Literal
+import re
+
+# Futures month codes: F=Jan, G=Feb, H=Mar, J=Apr, K=May, M=Jun,
+# N=Jul, Q=Aug, U=Sep, V=Oct, X=Nov, Z=Dec
+_FUTURES_CONTRACT_RE = re.compile(r'^(.+?)[FGHJKMNQUVXZ]\d{1,2}$')
+
+def _futures_root(contract: str) -> str:
+    """Extract product root from futures contract symbol.
+    MNQM6 -> MNQ, ESH5 -> ES, NQM6 -> NQ."""
+    m = _FUTURES_CONTRACT_RE.match(contract)
+    if m:
+        return m.group(1)
+    return ''.join(c for c in contract if c.isalpha())
 
 from app.models.db import get_db
 from app.models.tenant import Tenant
@@ -36,7 +49,8 @@ class CreateBrokerAccountRequest(BaseModel):
     auto_close_enabled: bool = False
     auto_close_time: str | None = None
     fifo_randomize: bool = False
-    fifo_max_offset: int = 3  # "HH:MM" ET, e.g. "16:50" for 4:50 PM
+    fifo_max_offset: int = 3
+    account_type: str | None = None  # personal-demo, personal-live, prop-eval, prop-demo, prop-live
     credentials: dict  # validated against BROKER_CREDENTIAL_FIELDS in the service
 
     @field_validator("account_alias")
@@ -78,7 +92,9 @@ class BrokerAccountOut(BaseModel):
     fifo_max_offset: int = 3
     max_total_drawdown: float | None = None
     max_daily_drawdown: float | None = None
+    drawdown_floor: float | None = None
     commission_per_contract: float | None = None
+    account_type: str | None = None
     created_at: datetime
     updated_at: datetime
     # Redacted credential summary — never returns raw secrets
@@ -107,7 +123,9 @@ def _to_out(account) -> BrokerAccountOut:
         fifo_max_offset=account.fifo_max_offset,
         max_total_drawdown=account.max_total_drawdown,
         max_daily_drawdown=account.max_daily_drawdown,
+        drawdown_floor=account.drawdown_floor,
         commission_per_contract=account.commission_per_contract,
+        account_type=account.account_type,
         created_at=account.created_at,
         updated_at=account.updated_at,
         credential_summary=summary,
@@ -151,6 +169,7 @@ async def create_account(
             auto_close_time=body.auto_close_time,
             fifo_randomize=body.fifo_randomize,
             fifo_max_offset=body.fifo_max_offset,
+            account_type=body.account_type,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -273,7 +292,8 @@ async def import_trade_history(
             continue
 
         fill_id = str(fill.get("id", ""))
-        if fill_id in existing_ids:
+        dedup_id = f"fill_{fill_id}" if fill_id and not fill_id.startswith("fill_") else fill_id
+        if dedup_id in existing_ids or fill_id in existing_ids:
             skipped += 1
             continue
 
@@ -283,7 +303,7 @@ async def import_trade_history(
 
         contract = order_data.get("contractName") or order_data.get("symbol") or ""
         # Extract product root (strip month/year suffix)
-        root = ''.join(c for c in contract if c.isalpha())
+        root = _futures_root(contract)
         multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
 
         price = float(fill.get("price", 0))
@@ -318,12 +338,12 @@ async def import_trade_history(
             status="FILLED",
             filled_quantity=qty,
             avg_fill_price=price,
-            broker_order_id=fill_id,
+            broker_order_id=dedup_id,
             time_in_force="GTC",
         )
         db.add(order)
         imported += 1
-        existing_ids.add(fill_id)
+        existing_ids.add(dedup_id)
 
     await db.commit()
     return {"imported": imported, "skipped": skipped, "total_fills": len(fills)}
@@ -338,8 +358,10 @@ async def import_csv_history(
 ):
     """
     Import trade history from a Tradovate CSV export.
-    Expects the standard Tradovate order export format with columns:
-    orderId, Account, B/S, Contract, Product, avgPrice, filledQty, Fill Time, Status, Type
+
+    Auto-detects two formats based on column headers:
+      - **Orders format**: orderId, Account, B/S, Contract, Product, avgPrice, filledQty, Fill Time, Status, Type
+      - **Fills format**: fillId, orderId, Account, B/S, Contract, Product, Price, Qty, Fill Time
     """
     import csv
     import io
@@ -354,7 +376,20 @@ async def import_csv_history(
 
     content = await file.read()
     text = content.decode("utf-8-sig")  # handle BOM from Windows exports
-    reader = csv.DictReader(io.StringIO(text))
+
+    # Auto-detect delimiter: tab-separated if first line contains tabs
+    first_line = text.split("\n", 1)[0]
+    delimiter = "\t" if "\t" in first_line else ","
+
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    headers = set(reader.fieldnames or [])
+
+    # Auto-detect format: fills have "Fill ID" or "fillId", or Quantity+Price without avgPrice
+    is_fills = bool(
+        headers & {"fillId", "Fill ID", "Fill Id"}
+    ) or (
+        headers & {"Price", "Qty", "Quantity"} and not headers & {"avgPrice", "filledQty"}
+    )
 
     # Get existing broker_order_ids to skip duplicates
     existing = await db.execute(
@@ -370,88 +405,46 @@ async def import_csv_history(
     imported = 0
     skipped = 0
     errors = []
+    fmt = "fills" if is_fills else "orders"
 
     for row_num, row in enumerate(reader, start=2):
         try:
-            status_val = (row.get("Status") or "").strip()
-            if status_val != "Filled":
+            if is_fills:
+                parsed = _parse_fill_row(row, account.account_alias)
+            else:
+                parsed = _parse_order_row(row, account.account_alias)
+
+            if parsed is None:
                 continue
 
-            # Filter by account name if present in CSV
-            csv_account = (row.get("Account") or "").strip()
-            if csv_account and csv_account != account.account_alias:
-                continue
-
-            order_id = (row.get("orderId") or "").strip()
-            if order_id in existing_ids:
+            dedup_id = parsed["dedup_id"]
+            if dedup_id in existing_ids:
                 skipped += 1
                 continue
 
-            action_str = (row.get("B/S") or "").strip().lower()
-            if action_str not in ("buy", "sell"):
-                continue
-
-            contract = (row.get("Contract") or "").strip()
-            product = (row.get("Product") or "").strip()
-            avg_price_str = (row.get("avgPrice") or row.get("Avg Fill Price") or "").strip()
-            filled_qty_str = (row.get("filledQty") or row.get("Filled Qty") or "").strip()
-            fill_time_str = (row.get("Fill Time") or "").strip()
-            order_type_str = (row.get("Type") or "market").strip().lower()
-
-            if not avg_price_str or not filled_qty_str or not fill_time_str:
-                continue
-
-            avg_price = float(avg_price_str)
-            filled_qty = float(filled_qty_str)
-            if avg_price == 0 or filled_qty == 0:
-                continue
-
-            # Parse fill time: "MM/DD/YYYY HH:MM:SS"
-            from datetime import datetime as dt, timezone as tz
-            try:
-                fill_time = dt.strptime(fill_time_str, "%m/%d/%Y %H:%M:%S").replace(tzinfo=tz.utc)
-            except ValueError:
-                try:
-                    fill_time = dt.fromisoformat(fill_time_str.replace("Z", "+00:00"))
-                except ValueError:
-                    continue
-
-            # Root symbol for multiplier lookup
-            root = ''.join(c for c in (product or contract) if c.isalpha())
-            multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
-
-            ot = "market" if "market" in order_type_str else "limit" if "limit" in order_type_str else "stop"
-
-            price = None
-            if ot == "limit":
-                try: price = float((row.get("decimalLimit") or row.get("Limit Price") or "").strip())
-                except (ValueError, AttributeError): pass
-            elif ot == "stop":
-                try: price = float((row.get("decimalStop") or row.get("Stop Price") or "").strip())
-                except (ValueError, AttributeError): pass
-
             order = Order(
-                created_at=fill_time,
-                updated_at=fill_time,
+                created_at=parsed["fill_time"],
+                updated_at=parsed["fill_time"],
                 tenant_id=tenant.id,
                 broker=account.broker,
                 account=account.account_alias,
-                symbol=contract,
+                symbol=parsed["contract"],
                 instrument_type="FUTURE",
-                action=action_str.upper(),
-                order_type=ot.upper(),
-                quantity=filled_qty,
-                price=price,
-                multiplier=multiplier,
+                action=parsed["action"],
+                order_type=parsed["order_type"],
+                quantity=parsed["qty"],
+                price=parsed.get("price"),
+                multiplier=parsed["multiplier"],
                 status="FILLED",
-                filled_quantity=filled_qty,
-                avg_fill_price=avg_price,
-                broker_order_id=order_id,
+                filled_quantity=parsed["qty"],
+                avg_fill_price=parsed["fill_price"],
+                commission=parsed.get("commission"),
+                broker_order_id=dedup_id,
                 time_in_force="GTC",
             )
             db.add(order)
             imported += 1
-            existing_ids.add(order_id)
+            existing_ids.add(dedup_id)
 
         except Exception as e:
             errors.append(f"Row {row_num}: {str(e)}")
@@ -459,10 +452,205 @@ async def import_csv_history(
                 break
 
     await db.commit()
-    result = {"imported": imported, "skipped": skipped}
+    result = {"imported": imported, "skipped": skipped, "format": fmt}
     if errors:
         result["errors"] = errors[:10]
     return result
+
+
+def _parse_timestamp(s: str):
+    """Parse a timestamp string in common Tradovate export formats."""
+    from datetime import datetime as dt, timezone as tz
+    s = s.strip()
+    # Try common formats — order matters (most specific first)
+    for fmt in (
+        "%m/%d/%Y %H:%M:%S",      # 3/23/2026 13:16:00
+        "%m/%d/%Y %H:%M",         # 3/23/2026 1:16
+        "%m/%d/%Y %I:%M:%S %p",   # 3/23/2026 1:16:00 PM
+        "%m/%d/%Y %I:%M %p",      # 3/23/2026 1:16 PM
+        "%Y-%m-%dT%H:%M:%S",      # 2026-03-23T08:16:01
+    ):
+        try:
+            return dt.strptime(s, fmt).replace(tzinfo=tz.utc)
+        except ValueError:
+            continue
+    # ISO-ish with timezone or fractional seconds
+    # Handle "2026-03-23 08:16:01.561Z" or "2026-03-23T08:16:01Z"
+    try:
+        return dt.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    # Handle space-separated ISO without T: "2026-03-23 08:16:01.561Z"
+    try:
+        return dt.fromisoformat(s.replace(" ", "T", 1).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _parse_fill_row(row: dict, account_alias: str) -> dict | None:
+    """
+    Parse a row from the Tradovate fills export.
+
+    Real column layout (tab-separated):
+    _timestamp, _tradeDate, _action, _qty, _price, _active, _accountId,
+    Fill ID, Order ID, Timestamp, Date, Account, B/S, Quantity, Price,
+    _priceFormat, _priceFormatType, _tickSize, Contract, Product,
+    Product Description, commission
+    """
+    from app.models.order import DEFAULT_FUTURES_MULTIPLIERS
+
+    # Filter by account
+    csv_account = (row.get("Account") or "").strip()
+    if csv_account and csv_account != account_alias:
+        return None
+
+    # Dedup key: fill ID is the unique identifier
+    fill_id = (
+        row.get("Fill ID") or row.get("Fill Id") or row.get("fillId") or ""
+    ).strip()
+    order_id = (
+        row.get("Order ID") or row.get("Order Id") or row.get("orderId") or ""
+    ).strip()
+    dedup_id = f"fill_{fill_id}" if fill_id else order_id
+    if not dedup_id:
+        return None
+
+    # Action — values may have leading spaces and be capitalized (" Buy", " Sell")
+    action_str = (
+        row.get("B/S") or row.get("Side") or row.get("Action") or ""
+    ).strip().lower()
+    if action_str not in ("buy", "sell"):
+        return None
+
+    contract = (row.get("Contract") or row.get("Symbol") or "").strip()
+    product = (row.get("Product") or "").strip()
+    if not contract:
+        return None
+
+    # Price and quantity — handle both "Price"/"Quantity" and "Qty"/"price" variants
+    price_str = (
+        row.get("Price") or row.get("Fill Price") or row.get("_price") or ""
+    )
+    if isinstance(price_str, str):
+        price_str = price_str.strip()
+    qty_str = (
+        row.get("Quantity") or row.get("Qty") or row.get("Filled Qty")
+        or row.get("_qty") or ""
+    )
+    if isinstance(qty_str, str):
+        qty_str = qty_str.strip()
+
+    if not price_str or not qty_str:
+        return None
+
+    fill_price = float(price_str)
+    qty = float(qty_str)
+    if fill_price == 0 or qty == 0:
+        return None
+
+    # Timestamp — prefer the precise _timestamp column (ISO with ms), fall back to Timestamp
+    fill_time_str = (
+        row.get("_timestamp") or row.get("Timestamp") or row.get("Fill Time")
+        or row.get("Time") or ""
+    ).strip()
+    if not fill_time_str:
+        return None
+    fill_time = _parse_timestamp(fill_time_str)
+    if fill_time is None:
+        return None
+
+    # Multiplier
+    root = _futures_root(product or contract)
+    multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
+
+    # Commission per contract from the CSV
+    comm_str = (row.get("commission") or "").strip()
+    fill_commission = float(comm_str) if comm_str else None
+
+    return {
+        "dedup_id": dedup_id,
+        "action": action_str.upper(),
+        "contract": contract,
+        "fill_price": fill_price,
+        "qty": qty,
+        "fill_time": fill_time,
+        "multiplier": multiplier,
+        "order_type": "MARKET",
+        "price": None,
+        "commission": fill_commission,
+    }
+
+
+def _parse_order_row(row: dict, account_alias: str) -> dict | None:
+    """
+    Parse a row from the Tradovate orders CSV export.
+    Columns: orderId, Account, B/S, Contract, Product, avgPrice, filledQty, Fill Time, Status, Type
+    """
+    from app.models.order import DEFAULT_FUTURES_MULTIPLIERS
+
+    status_val = (row.get("Status") or "").strip()
+    if status_val != "Filled":
+        return None
+
+    csv_account = (row.get("Account") or "").strip()
+    if csv_account and csv_account != account_alias:
+        return None
+
+    order_id = (row.get("orderId") or "").strip()
+    if not order_id:
+        return None
+
+    action_str = (row.get("B/S") or "").strip().lower()
+    if action_str not in ("buy", "sell"):
+        return None
+
+    contract = (row.get("Contract") or "").strip()
+    product = (row.get("Product") or "").strip()
+    avg_price_str = (row.get("avgPrice") or row.get("Avg Fill Price") or "").strip()
+    filled_qty_str = (row.get("filledQty") or row.get("Filled Qty") or "").strip()
+    fill_time_str = (row.get("Fill Time") or "").strip()
+    order_type_str = (row.get("Type") or "market").strip().lower()
+
+    if not avg_price_str or not filled_qty_str or not fill_time_str:
+        return None
+
+    avg_price = float(avg_price_str)
+    filled_qty = float(filled_qty_str)
+    if avg_price == 0 or filled_qty == 0:
+        return None
+
+    fill_time = _parse_timestamp(fill_time_str)
+    if fill_time is None:
+        return None
+
+    root = _futures_root(product or contract)
+    multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
+
+    ot = "market" if "market" in order_type_str else "limit" if "limit" in order_type_str else "stop"
+
+    price = None
+    if ot == "limit":
+        try:
+            price = float((row.get("decimalLimit") or row.get("Limit Price") or "").strip())
+        except (ValueError, AttributeError):
+            pass
+    elif ot == "stop":
+        try:
+            price = float((row.get("decimalStop") or row.get("Stop Price") or "").strip())
+        except (ValueError, AttributeError):
+            pass
+
+    return {
+        "dedup_id": order_id,
+        "action": action_str.upper(),
+        "contract": contract,
+        "fill_price": avg_price,
+        "qty": filled_qty,
+        "fill_time": fill_time,
+        "multiplier": multiplier,
+        "order_type": ot.upper(),
+        "price": price,
+    }
 
 
 @router.post("/{account_id}/sync-history")
@@ -548,7 +736,8 @@ async def sync_trade_history(
     # Process fills
     for fill in fills:
         fill_id = str(fill.get("id", fill.get("orderId", "")))
-        if fill_id in existing_ids:
+        dedup_id = f"fill_{fill_id}" if fill_id and not fill_id.startswith("fill_") else fill_id
+        if dedup_id in existing_ids or fill_id in existing_ids:
             skipped += 1
             continue
 
@@ -559,7 +748,7 @@ async def sync_trade_history(
             continue
 
         contract = order_data.get("contractName") or fill.get("contractName", "")
-        root = ''.join(c for c in contract if c.isalpha())
+        root = _futures_root(contract)
         multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
 
         price = float(fill.get("price", 0))
@@ -593,12 +782,12 @@ async def sync_trade_history(
             status="FILLED",
             filled_quantity=qty,
             avg_fill_price=price,
-            broker_order_id=fill_id,
+            broker_order_id=dedup_id,
             time_in_force="GTC",
         )
         db.add(order)
         imported += 1
-        existing_ids.add(fill_id)
+        existing_ids.add(dedup_id)
 
     await db.commit()
     return {
@@ -647,9 +836,52 @@ async def delete_account(
     await db.commit()
 
 
+@router.post("/verify-connection")
+async def verify_connection(
+    body: CreateBrokerAccountRequest,
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Verify broker credentials before saving. Returns account info on success."""
+    import httpx
+
+    if body.broker == "oanda":
+        creds = body.credentials
+        api_key = creds.get("api_key", "")
+        account_id = creds.get("account_id", "")
+        base_url = creds.get("base_url", "https://api-fxpractice.oanda.com/v3")
+
+        if not api_key or not account_id:
+            raise HTTPException(status_code=422, detail="API key and account ID are required")
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{base_url}/accounts/{account_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                if resp.status_code == 401:
+                    raise HTTPException(status_code=401, detail="Invalid API key")
+                if resp.status_code == 404:
+                    raise HTTPException(status_code=404, detail="Account not found")
+                resp.raise_for_status()
+                acct = resp.json().get("account", {})
+                return {
+                    "valid": True,
+                    "balance": float(acct.get("balance", 0)),
+                    "currency": acct.get("currency", "USD"),
+                }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Connection failed: {str(e)}")
+
+    raise HTTPException(status_code=400, detail=f"Verify not supported for {body.broker}")
+
+
 @router.get("/tradovate/oauth-url")
 async def tradovate_oauth_url(
     env: str = "live",
+    reauth: bool = False,
     tenant: Tenant = Depends(get_current_tenant),
 ):
     """Return the Tradovate OAuth authorization URL."""
@@ -661,7 +893,7 @@ async def tradovate_oauth_url(
         raise HTTPException(status_code=400, detail="Tradovate OAuth not configured")
 
     # Encrypt env + tenant_id in state param for CSRF protection
-    state = encrypt_credentials({"tenant_id": str(tenant.id), "env": env})
+    state = encrypt_credentials({"tenant_id": str(tenant.id), "env": env, "reauth": reauth})
 
     url = (
         f"https://trader.tradovate.com/oauth"
@@ -754,6 +986,57 @@ async def fetch_tradovate_accounts(
         raise HTTPException(status_code=502, detail=f"Failed to connect to Tradovate: {str(e)}")
 
 
+class TradovateReauthRequest(BaseModel):
+    token: str  # encrypted OAuth credentials
+
+
+@router.post("/tradovate/reauth")
+async def reauth_tradovate_accounts(
+    body: TradovateReauthRequest,
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Re-authorize all existing Tradovate accounts for this tenant with a fresh OAuth token.
+    Updates credentials on all matching accounts without creating new ones.
+    """
+    from app.services.credentials import decrypt_credentials, encrypt_credentials
+
+    # Decrypt the OAuth token payload
+    new_creds = decrypt_credentials(body.token)
+
+    # Find all existing Tradovate accounts for this tenant
+    result = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.tenant_id == tenant.id,
+            BrokerAccount.broker == "tradovate",
+        )
+    )
+    accounts = result.scalars().all()
+
+    if not accounts:
+        raise HTTPException(status_code=404, detail="No Tradovate accounts found to re-authorize")
+
+    updated = []
+    for acct in accounts:
+        # Merge new OAuth creds into existing creds (preserve instrument_map, etc.)
+        try:
+            existing_creds = decrypt_credentials(acct.credentials_encrypted)
+        except Exception:
+            existing_creds = {}
+
+        existing_creds["access_token"] = new_creds["access_token"]
+        existing_creds["refresh_token"] = new_creds.get("refresh_token")
+        existing_creds["base_url"] = new_creds.get("base_url", existing_creds.get("base_url"))
+        existing_creds["auth_method"] = "oauth"
+
+        acct.credentials_encrypted = encrypt_credentials(existing_creds)
+        updated.append(acct.account_alias)
+
+    await db.commit()
+    return {"updated": updated, "count": len(updated)}
+
+
 class TradovateBulkCreateRequest(BaseModel):
     credentials: dict
     accounts: list[dict]  # [{"name": "APEX2912...", "alias": "AP-176", "display_name": "...", "prop_firm": bool}]
@@ -844,6 +1127,7 @@ class InstrumentMapEntry(BaseModel):
 
     For Oanda/E*Trade: instrument_map is not used.
     """
+    target_symbol: str | None = None  # broker-side symbol (e.g. MNQ1! → MNQM6)
     conid: int | None = None
     sec_type: str | None = None
     exchange: str | None = None
@@ -1094,6 +1378,7 @@ async def flatten_positions(
 class DrawdownUpdate(BaseModel):
     max_total_drawdown: float | None = None
     max_daily_drawdown: float | None = None
+    drawdown_floor: float | None = None
     commission_per_contract: float | None = None
 
 
@@ -1115,6 +1400,7 @@ async def update_drawdown_limits(
         raise HTTPException(status_code=404, detail="Broker account not found")
     account.max_total_drawdown = body.max_total_drawdown
     account.max_daily_drawdown = body.max_daily_drawdown
+    account.drawdown_floor = body.drawdown_floor
     account.commission_per_contract = body.commission_per_contract
     await db.commit()
     return {

@@ -22,7 +22,7 @@ async def init_db():
     async with engine.begin() as conn:
         from app.models import (  # noqa: register all models
             order, position, tenant, api_key,
-            broker_account, plan, webhook_delivery,
+            broker_account, plan, webhook_delivery, trail_trigger,
         )
         await conn.run_sync(Base.metadata.create_all)
 

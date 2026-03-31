@@ -433,6 +433,19 @@ class OandaBroker(BrokerBase):
                 logger.exception(f"Error polling Oanda order {broker_order_id}")
                 return OrderStatusResult(found=False, error_message=str(e))
 
+    async def verify_connection(self) -> dict:
+        """Verify the API key and account ID are valid. Returns account info or raises."""
+        async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:
+            resp = await client.get(f"{self.base_url}/accounts/{self.account_id}")
+            resp.raise_for_status()
+            acct = resp.json().get("account", {})
+            return {
+                "valid": True,
+                "balance": float(acct.get("balance", 0)),
+                "currency": acct.get("currency", "USD"),
+                "alias": acct.get("alias", ""),
+            }
+
     async def get_balance(self, account: str) -> float | None:
         account_id = self._resolve_account(account)
         async with httpx.AsyncClient(headers=self.headers, timeout=10.0) as client:

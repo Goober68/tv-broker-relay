@@ -79,9 +79,13 @@ class BrokerAccount(Base):
     auto_close_enabled: Mapped[bool]        = mapped_column(Boolean, default=False)
     auto_close_time:    Mapped[str | None]  = mapped_column(String(5), nullable=True)  # "HH:MM" ET
 
+    # Account type: personal-demo, personal-live, prop-eval, prop-demo, prop-live
+    account_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     # Prop firm drawdown limits (nullable = not a prop account or no limits set)
     max_total_drawdown:  Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 2500.00
     max_daily_drawdown:  Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 1500.00
+    drawdown_floor:      Mapped[float | None] = mapped_column(Float, nullable=True)  # liquidation level from prop firm
 
     # Commission per contract per side (for P&L calculation)
     commission_per_contract: Mapped[float | None] = mapped_column(Float, nullable=True)  # e.g. 2.88

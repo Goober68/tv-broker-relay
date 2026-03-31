@@ -5,7 +5,8 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.order import Order, OrderStatus, OrderType, InstrumentType, DEFAULT_FUTURES_MULTIPLIERS
+from app.models.order import Order, OrderStatus, OrderType, InstrumentType, DEFAULT_FUTURES_MULTIPLIERS, OrderAction
+from app.models.broker_account import BrokerAccount
 from app.schemas.webhook import WebhookPayload
 from app.brokers.registry import get_broker_for_tenant
 from app.services.state import get_or_create_position, apply_fill_to_position
@@ -212,6 +213,28 @@ async def process_webhook(
         # Only check open order limit for new limit/stop orders (not cancel-replace, not market)
         if payload.order_type.value != "market" and replaced_order is None:
             await enforcer.check_open_orders(db)
+
+    # --- 3b. Symbol translation via instrument_map ---
+    # Check all accounts for this broker (not just the target account) so symbol
+    # mappings only need to be configured once per broker.
+    original_symbol = payload.symbol
+    broker_accounts = await db.execute(
+        select(BrokerAccount).where(
+            BrokerAccount.tenant_id == tenant_id,
+            BrokerAccount.broker == payload.broker,
+            BrokerAccount.is_active == True,  # noqa: E712
+        )
+    )
+    for ba in broker_accounts.scalars().all():
+        if ba.instrument_map:
+            instr = ba.instrument_map.get(payload.symbol, {})
+            if isinstance(instr, dict) and instr.get("target_symbol"):
+                logger.info(
+                    f"Symbol translation: {payload.symbol} → {instr['target_symbol']} "
+                    f"(via instrument_map on {ba.account_alias})"
+                )
+                payload.symbol = instr["target_symbol"]
+                break
 
     # --- 4. Risk checks ---
     pos = await get_or_create_position(

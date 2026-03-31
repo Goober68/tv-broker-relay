@@ -6,10 +6,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.models.db import init_db
-from app.routers import webhook, status, auth, api_keys, broker_accounts, admin, billing
+from app.routers import webhook, status, auth, api_keys, broker_accounts, admin, billing, oauth
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
@@ -44,6 +44,7 @@ app.include_router(api_keys.router)
 app.include_router(broker_accounts.router)
 app.include_router(billing.router)
 app.include_router(admin.router)
+app.include_router(oauth.router)
 app.include_router(webhook.router)
 app.include_router(status.router)
 
@@ -61,6 +62,8 @@ async def health():
 if STATIC_DIR.exists():
     # Serve all static assets
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    if (STATIC_DIR / "brokers").exists():
+        app.mount("/brokers", StaticFiles(directory=STATIC_DIR / "brokers"), name="brokers")
 
     @app.get("/favicon.svg", include_in_schema=False)
     async def favicon():
@@ -68,7 +71,12 @@ if STATIC_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # Serve actual static files if they exist (images, etc.)
+        static_file = STATIC_DIR / full_path
+        if static_file.is_file() and STATIC_DIR in static_file.resolve().parents:
+            return FileResponse(static_file, headers={"Cache-Control": "public, max-age=86400"})
+        # Otherwise fall back to SPA index — no-cache so browser doesn't cache HTML for asset paths
         index = STATIC_DIR / "index.html"
         if index.exists():
-            return FileResponse(index)
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
         return {"detail": "Frontend not built"}

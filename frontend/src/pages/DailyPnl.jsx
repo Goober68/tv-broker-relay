@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { pnl as pnlApi, positions } from '../lib/api'
 import { usePolling } from '../hooks/useApi'
-import { PageSpinner, SectionHeader, PnlValue, EmptyState, brokerLabel } from '../components/ui'
+import { PageSpinner, SectionHeader, PnlValue, EmptyState, brokerLabel, BrokerIcon } from '../components/ui'
 import { LineChart, Line, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts'
 import { clsx } from 'clsx'
 
@@ -133,7 +133,10 @@ export default function PnlPage() {
                         <div className="font-mono text-base-100">
                           {account.display_name || account.account}
                         </div>
-                        <div className="text-[10px] text-base-500 mt-0.5">{brokerLabel(account.broker)}</div>
+                        <div className="flex items-center gap-1 text-[10px] text-base-500 mt-0.5">
+                          <BrokerIcon broker={account.broker} size={11} />
+                          {brokerLabel(account.broker)}
+                        </div>
                       </td>
                       <td className="text-right px-3 py-2.5 font-mono text-base-300">
                         {account.balance != null

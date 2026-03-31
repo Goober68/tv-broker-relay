@@ -36,8 +36,8 @@ async function request(path, options = {}, retry = true) {
 
   const res = await fetch(path, { ...options, headers })
 
-  // Auto-refresh on 401
-  if (res.status === 401 && retry) {
+  // Auto-refresh on 401 — but not for auth endpoints (login/register)
+  if (res.status === 401 && retry && !path.includes('/auth/login') && !path.includes('/auth/register')) {
     const refreshed = await attemptRefresh()
     if (refreshed) {
       return request(path, options, false)
@@ -165,8 +165,10 @@ export const brokerAccounts = {
   suspend:         (id, active)  => api.patch(`/api/broker-accounts/${id}/suspend`, { is_active: active }),
   flatten:         (id)          => api.post(`/api/broker-accounts/${id}/flatten`),
   updateFifo:      (id, body)    => api.patch(`/api/broker-accounts/${id}/fifo`, body),
+  verifyConnection: (body)        => api.post('/api/broker-accounts/verify-connection', body),
   tradovateFetchAccounts: (creds) => api.post('/api/broker-accounts/tradovate/fetch-accounts', { credentials: creds }),
-  tradovateOAuthUrl:      (env = 'live') => api.get(`/api/broker-accounts/tradovate/oauth-url?env=${env}`),
+  tradovateOAuthUrl:      (env = 'live', reauth = false) => api.get(`/api/broker-accounts/tradovate/oauth-url?env=${env}${reauth ? '&reauth=true' : ''}`),
+  tradovateReauth:        (token) => api.post('/api/broker-accounts/tradovate/reauth', { token }),
   tradovateBulkCreate:    (creds, accounts) => api.post('/api/broker-accounts/tradovate/bulk-create', { credentials: creds, accounts }),
 }
 

@@ -129,9 +129,19 @@ async def tradovate_oauth_callback(
     ])
     accounts_b64 = base64.urlsafe_b64encode(accounts_json.encode()).decode()
 
+    # Check if this is a reauth flow (reconnect existing accounts)
+    reauth = False
+    try:
+        if state:
+            reauth = state_data.get("reauth", False)
+    except Exception:
+        pass
+
+    mode = "reauth" if reauth else "tradovate"
+
     redirect_url = (
         f"/broker-accounts"
-        f"?oauth=tradovate"
+        f"?oauth={mode}"
         f"&env={env}"
         f"&accounts={accounts_b64}"
         f"&token={urllib.parse.quote(encrypted_token)}"

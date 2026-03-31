@@ -12,6 +12,43 @@ export function brokerLabel(broker) {
   return BROKER_DISPLAY[broker] || broker
 }
 
+const BROKER_ICONS = {
+  oanda: '/brokers/oanda-icon.png?v=1',
+  tradovate: '/brokers/tradovate-icon.png?v=1',
+}
+
+const BROKER_LOGOS = {
+  oanda: '/brokers/oanda.svg?v=1',
+  tradovate: '/brokers/tradovate.png?v=2',
+}
+
+export function BrokerIcon({ broker, size = 16, className }) {
+  const src = BROKER_ICONS[broker]
+  if (!src) return null
+  return (
+    <img
+      src={src}
+      alt={brokerLabel(broker)}
+      width={size}
+      height={size}
+      className={clsx('inline-block flex-shrink-0', className)}
+    />
+  )
+}
+
+export function BrokerLogo({ broker, height = 18, className }) {
+  const src = BROKER_LOGOS[broker]
+  if (!src) return null
+  return (
+    <img
+      src={src}
+      alt={brokerLabel(broker)}
+      style={{ height }}
+      className={clsx('inline-block flex-shrink-0 w-auto', className)}
+    />
+  )
+}
+
 // ── Spinner ────────────────────────────────────────────────────────────────────
 
 export function Spinner({ size = 'md', className }) {

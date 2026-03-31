@@ -3,10 +3,11 @@ import { brokerAccounts as brokersApi } from '../lib/api'
 import { useApi } from '../hooks/useApi'
 import {
   PageSpinner, SectionHeader, Alert, EmptyState,
-  ConfirmInline, Spinner, brokerLabel
+  ConfirmInline, Spinner, brokerLabel, BrokerIcon, BrokerLogo
 } from '../components/ui'
+import AccountWizard from '../components/AccountWizard'
 
-const BROKERS = ['oanda', 'ibkr', 'tradovate', 'etrade']
+const BROKERS = ['oanda', 'tradovate']
 
 const CREDENTIAL_PLACEHOLDERS = {
   oanda:     { api_key: 'Your Oanda API key', account_id: '101-001-XXXXXXX-001', base_url: 'https://api-fxtrade.oanda.com/v3' },
@@ -28,9 +29,24 @@ export default function BrokerAccountsPage() {
 
   // Detect OAuth redirect params
   const [oauthData, setOauthData] = useState(null)
+  const [reauthMsg, setReauthMsg] = useState(null)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('oauth') === 'tradovate') {
+    const oauthMode = params.get('oauth')
+    if (oauthMode === 'reauth') {
+      // Reconnect flow — update existing accounts with fresh token
+      const token = params.get('token') || ''
+      window.history.replaceState({}, '', '/broker-accounts')
+      if (token) {
+        brokersApi.tradovateReauth(token).then(res => {
+          setReauthMsg(`Re-authorized ${res.count} account(s): ${res.updated.join(', ')}`)
+          refetch()
+          setTimeout(() => setReauthMsg(null), 6000)
+        }).catch(err => {
+          alert('Reauth failed: ' + (err.detail || err.message))
+        })
+      }
+    } else if (oauthMode === 'tradovate') {
       try {
         const accountsB64 = params.get('accounts') || ''
         const accounts = JSON.parse(atob(accountsB64))
@@ -41,7 +57,6 @@ export default function BrokerAccountsPage() {
       } catch (e) {
         console.error('Failed to parse OAuth redirect params', e)
       }
-      // Clean URL
       window.history.replaceState({}, '', '/broker-accounts')
     }
     if (params.get('oauth_error')) {
@@ -72,15 +87,14 @@ export default function BrokerAccountsPage() {
         }
       />
 
-      {/* Add form */}
+      {reauthMsg && (
+        <Alert type="success" message={reauthMsg} />
+      )}
+
+      {/* Add wizard */}
       {adding && (
-        <BrokerForm
-          onSave={async (body) => {
-            await brokersApi.create(body)
-            setAdding(false)
-            setOauthData(null)
-            refetch()
-          }}
+        <AccountWizard
+          onDone={() => { setAdding(false); setOauthData(null); refetch() }}
           onCancel={() => { setAdding(false); setOauthData(null); refetch() }}
           oauthData={oauthData}
         />
@@ -124,7 +138,7 @@ export default function BrokerAccountsPage() {
 // ── Add/Edit form ──────────────────────────────────────────────────────────────
 
 function BrokerForm({ onSave, onCancel, initial, oauthData }) {
-  const [broker, setBroker]   = useState(oauthData ? 'tradovate' : (initial?.broker || 'oanda'))
+  const [broker, setBroker]   = useState(oauthData ? 'tradovate' : (initial?.broker || null))
   const [alias, setAlias]     = useState(initial?.account_alias || 'primary')
   const [display, setDisplay] = useState(initial?.display_name || '')
   const [creds, setCreds]     = useState({})
@@ -261,32 +275,45 @@ function BrokerForm({ onSave, onCancel, initial, oauthData }) {
 
   return (
     <div className="panel p-6 animate-slide-up">
-      <h3 className="font-display font-semibold text-base-100 mb-5">Connect a broker</h3>
+      <h3 className="font-display font-semibold text-base-100 mb-5">Connect a broker account</h3>
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Broker selector — only show if we haven't fetched Tradovate accounts yet */}
+
+        {/* Step 1: Broker selector — always visible unless OAuth accounts loaded */}
         {!(isTradovate && tvAccounts) && (
+          <div>
+            <label className="block text-xs font-medium text-base-300 mb-2">Select broker</label>
+            <div className="flex gap-2">
+              {BROKERS.map(b => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => { setBroker(b); setCreds({}); setTvAccounts(null) }}
+                  className={`flex-1 py-2 px-3 text-xs font-mono rounded-md border transition-colors ${
+                    broker === b
+                      ? 'bg-base-700 border-accent/40 text-base-100'
+                      : 'bg-base-900 border-base-700 text-base-500 hover:text-base-300 hover:border-base-600'
+                  }`}
+                >
+                  {brokerLabel(b)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Broker-specific connection — only after broker selected */}
+        {broker && !isTradovate && !(isTradovate && tvAccounts) && (
           <>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-base-300 mb-1.5">Broker</label>
-                <select className="input" value={broker} onChange={e => { setBroker(e.target.value); setCreds({}); setTvAccounts(null) }}>
-                  {BROKERS.map(b => <option key={b} value={b}>{brokerLabel(b)}</option>)}
-                </select>
+                <label className="block text-xs font-medium text-base-300 mb-1.5">Account ID</label>
+                <input className="input" value={alias} onChange={e => setAlias(e.target.value)} placeholder="primary" />
               </div>
-              {!isTradovate && (
-                <div>
-                  <label className="block text-xs font-medium text-base-300 mb-1.5">Account alias</label>
-                  <input className="input" value={alias} onChange={e => setAlias(e.target.value)} placeholder="primary" />
-                </div>
-              )}
-            </div>
-
-            {!isTradovate && (
               <div>
                 <label className="block text-xs font-medium text-base-300 mb-1.5">Display name (optional)</label>
                 <input className="input" value={display} onChange={e => setDisplay(e.target.value)} placeholder={`My ${brokerLabel(broker)} account`} />
               </div>
-            )}
+            </div>
           </>
         )}
 
@@ -339,8 +366,8 @@ function BrokerForm({ onSave, onCancel, initial, oauthData }) {
           </div>
         )}
 
-        {/* Credentials section — hidden after fetch/OAuth */}
-        {!(isTradovate && tvAccounts) && (
+        {/* Credentials section — hidden until broker selected, and after fetch/OAuth */}
+        {broker && !(isTradovate && tvAccounts) && (
           <div className="border-t border-base-700 pt-4">
 
             {isTradovate ? (
@@ -453,13 +480,10 @@ function BrokerForm({ onSave, onCancel, initial, oauthData }) {
         <Alert type="error" message={error} />
 
         <div className="flex gap-3 pt-2">
-          {isTradovate && !tvAccounts ? (
+          {!broker ? (
+            <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
+          ) : isTradovate && !tvAccounts ? (
             <>
-              <button type="button" onClick={handleFetchAccounts}
-                className="btn-primary flex items-center gap-2" disabled={tvFetching}>
-                {tvFetching && <Spinner size="sm" />}
-                Fetch accounts
-              </button>
               <button type="button" className="btn-ghost" onClick={onCancel}>Cancel</button>
             </>
           ) : (
@@ -801,7 +825,7 @@ function ReconnectOAuth({ account }) {
   const handleReconnect = async () => {
     try {
       const env = account.credential_summary?.base_url?.includes('demo') ? 'demo' : 'live'
-      const { url } = await brokersApi.tradovateOAuthUrl(env)
+      const { url } = await brokersApi.tradovateOAuthUrl(env, true)
       window.location.href = url
     } catch {}
   }
@@ -829,6 +853,7 @@ function ReconnectOAuth({ account }) {
 function DrawdownSettings({ account, onRefresh }) {
   const [totalDD, setTotalDD] = useState(account.max_total_drawdown ?? '')
   const [dailyDD, setDailyDD] = useState(account.max_daily_drawdown ?? '')
+  const [ddFloor, setDdFloor] = useState(account.drawdown_floor ?? '')
   const [commission, setCommission] = useState(account.commission_per_contract ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -836,8 +861,9 @@ function DrawdownSettings({ account, onRefresh }) {
   useEffect(() => {
     setTotalDD(account.max_total_drawdown ?? '')
     setDailyDD(account.max_daily_drawdown ?? '')
+    setDdFloor(account.drawdown_floor ?? '')
     setCommission(account.commission_per_contract ?? '')
-  }, [account.max_total_drawdown, account.max_daily_drawdown, account.commission_per_contract])
+  }, [account.max_total_drawdown, account.max_daily_drawdown, account.drawdown_floor, account.commission_per_contract])
 
   const handleSave = async () => {
     setSaving(true)
@@ -845,6 +871,7 @@ function DrawdownSettings({ account, onRefresh }) {
       await brokersApi.updateDrawdown(account.id, {
         max_total_drawdown: totalDD === '' ? null : parseFloat(totalDD),
         max_daily_drawdown: dailyDD === '' ? null : parseFloat(dailyDD),
+        drawdown_floor: ddFloor === '' ? null : parseFloat(ddFloor),
         commission_per_contract: commission === '' ? null : parseFloat(commission),
       })
       setSaved(true)
@@ -879,13 +906,13 @@ function DrawdownSettings({ account, onRefresh }) {
           />
         </div>
         <div>
-          <label className="block text-[10px] text-base-500 mb-1">Max daily drawdown ($)</label>
+          <label className="block text-[10px] text-base-500 mb-1">Drawdown floor ($)</label>
           <input
             className="input py-1 text-xs font-mono w-28"
             type="number" step="0.01" min="0"
-            placeholder="e.g. 1500"
-            value={dailyDD}
-            onChange={e => setDailyDD(e.target.value)}
+            placeholder="e.g. 48354"
+            value={ddFloor}
+            onChange={e => setDdFloor(e.target.value)}
           />
         </div>
         <button
@@ -897,7 +924,7 @@ function DrawdownSettings({ account, onRefresh }) {
         </button>
       </div>
       <p className="text-[10px] text-base-500 mt-2">
-        Commission deducted per side in P&L calc. Leave drawdown blank if no limits.
+        Drawdown floor = liquidation level from prop firm. When set, remaining = live balance - floor.
       </p>
     </div>
   )
@@ -969,7 +996,7 @@ function ImportHistory({ accountId }) {
       </div>
       {result && (
         <div className="mt-2 text-xs font-mono text-accent">
-          {result.message || `Imported ${result.imported} fills (${result.skipped || 0} duplicates skipped)`}
+          {result.message || `Imported ${result.imported} ${result.format === 'fills' ? 'fills' : 'orders'} (${result.skipped || 0} duplicates skipped${result.format ? `, ${result.format} format` : ''})`}
           {result.errors?.length > 0 && (
             <span className="text-loss ml-2">({result.errors.length} errors)</span>
           )}
@@ -984,14 +1011,17 @@ function ImportHistory({ accountId }) {
 
 function BrokerBadge({ broker }) {
   const colors = {
-    oanda:     'bg-blue-500/10 text-blue-400',
+    oanda:     'bg-blue-500/10',
     ibkr:      'bg-purple-500/10 text-purple-400',
-    tradovate: 'bg-orange-500/10 text-orange-400',
+    tradovate: 'bg-orange-500/10',
     etrade:    'bg-green-500/10 text-green-400',
   }
+  const hasLogo = ['oanda', 'tradovate'].includes(broker)
   return (
-    <div className={`text-xs font-mono font-bold px-2 py-1 rounded uppercase ${colors[broker] || 'bg-base-700 text-base-300'}`}>
-      {broker}
+    <div className={`flex items-center justify-center text-xs font-mono font-bold px-2 py-1 rounded uppercase ${colors[broker] || 'bg-base-700 text-base-300'}`}>
+      {hasLogo ? (
+        <BrokerLogo broker={broker} height={20} />
+      ) : broker}
     </div>
   )
 }
@@ -1000,6 +1030,7 @@ function InstrumentMap({ accountId }) {
   const { data, loading, refetch } = useApi(() => brokersApi.instruments(accountId))
   const [adding, setAdding]     = useState(false)
   const [symbol, setSymbol]     = useState('')
+  const [targetSym, setTargetSym] = useState('')
   const [conid, setConid]       = useState('')
   const [secType, setSecType]   = useState('STK')
   const [exchange, setExchange] = useState('')
@@ -1009,6 +1040,7 @@ function InstrumentMap({ accountId }) {
   const handleAdd = async (e) => {
     e.preventDefault()
     const entry = {}
+    if (targetSym)     entry.target_symbol = targetSym.toUpperCase()
     if (conid)         entry.conid      = parseInt(conid)
     if (secType)       entry.sec_type   = secType
     if (exchange)      entry.exchange   = exchange
@@ -1016,7 +1048,7 @@ function InstrumentMap({ accountId }) {
     if (commissionVal) entry.commission = parseFloat(commissionVal)
     await brokersApi.upsertInstrument(accountId, symbol.toUpperCase(), entry)
     setAdding(false)
-    setSymbol(''); setConid(''); setExchange(''); setMult(''); setCommissionVal('')
+    setSymbol(''); setTargetSym(''); setConid(''); setExchange(''); setMult(''); setCommissionVal('')
     refetch()
   }
 
@@ -1038,18 +1070,14 @@ function InstrumentMap({ accountId }) {
 
       {adding && (
         <form onSubmit={handleAdd} className="bg-base-950 rounded-md p-3 mb-3 space-y-2 animate-fade-in">
+          <div className="flex items-center gap-2 mb-1">
+            <input className="input py-1 text-xs flex-1" placeholder="TradingView symbol (e.g. MNQ1!)" value={symbol} onChange={e => setSymbol(e.target.value)} required />
+            <span className="text-base-500 text-xs">→</span>
+            <input className="input py-1 text-xs flex-1" placeholder="Broker symbol (e.g. MNQM6)" value={targetSym} onChange={e => setTargetSym(e.target.value)} />
+          </div>
           <div className="grid grid-cols-2 gap-2">
-            <input className="input py-1 text-xs" placeholder="Symbol (e.g. ES)" value={symbol} onChange={e => setSymbol(e.target.value)} required />
-            <input className="input py-1 text-xs" placeholder="ConID (IBKR only)" value={conid} onChange={e => setConid(e.target.value)} />
-            <select className="input py-1 text-xs" value={secType} onChange={e => setSecType(e.target.value)}>
-              <option value="STK">STK — Equity</option>
-              <option value="FUT">FUT — Future</option>
-              <option value="OPT">OPT — Option</option>
-              <option value="CASH">CASH — Forex</option>
-            </select>
-            <input className="input py-1 text-xs" placeholder="Exchange (e.g. CME)" value={exchange} onChange={e => setExchange(e.target.value)} />
-            <input className="input py-1 text-xs" placeholder="Multiplier (e.g. 50)" value={multiplier} onChange={e => setMult(e.target.value)} />
             <input className="input py-1 text-xs" placeholder="Commission $/side (e.g. 2.50)" value={commissionVal} onChange={e => setCommissionVal(e.target.value)} />
+            <input className="input py-1 text-xs" placeholder="Multiplier override (e.g. 2)" value={multiplier} onChange={e => setMult(e.target.value)} />
           </div>
           <button type="submit" className="btn-primary text-xs py-1 px-3">Save instrument</button>
         </form>
@@ -1063,15 +1091,16 @@ function InstrumentMap({ accountId }) {
         <div className="bg-base-950 rounded-md overflow-hidden">
           {instruments.map(([sym, cfg]) => (
             <div key={sym} className="flex items-center gap-3 px-3 py-2 border-b border-base-800 last:border-0 text-xs">
-              <span className="font-mono font-bold text-base-100 w-12">{sym}</span>
-              <span className="text-base-500 font-mono flex-1">
+              <span className="font-mono font-bold text-base-100">{sym}</span>
+              {cfg.target_symbol && (
+                <span className="text-base-500 font-mono">→ <span className="text-base-300">{cfg.target_symbol}</span></span>
+              )}
+              <span className="text-base-500 font-mono flex-1 ml-2">
                 {[
-                  cfg.multiplier && `×${cfg.multiplier}`,
                   cfg.commission != null && `$${cfg.commission}/side`,
+                  cfg.multiplier && `×${cfg.multiplier}`,
                   cfg.exchange,
-                  cfg.sec_type,
-                  cfg.conid && `conid:${cfg.conid}`,
-                ].filter(Boolean).join(' · ') || '—'}
+                ].filter(Boolean).join(' · ') || ''}
               </span>
               <button onClick={() => handleDelete(sym)} className="text-base-600 hover:text-loss transition-colors">✕</button>
             </div>
