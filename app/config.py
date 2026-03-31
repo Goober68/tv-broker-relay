@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     pnl_poll_interval_seconds: int = 60        # how often to poll live P&L from brokers
     reconcile_interval_seconds: int = 60       # how often to sync positions vs broker
     ibkr_keepalive_interval_seconds: int = 55  # how often to tickle IBKR gateway
+    pnl_engine_interval_seconds: int = 15      # how often the P&L engine processes new fills
+    pnl_reconcile_interval_seconds: int = 3600 # how often to do a full P&L recalculation
     daily_summary_hour_utc: int = 7            # UTC hour to send daily P&L emails (0-23)
 
     # ── Email (SMTP) ──────────────────────────────────────────────────────────

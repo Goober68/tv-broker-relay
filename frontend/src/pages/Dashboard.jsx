@@ -1,5 +1,6 @@
 import { useAuth } from '../lib/auth-context'
-import { positions, orders, billing } from '../lib/api'
+import { positions, orders, billing, pnl } from '../lib/api'
+import { useEventSource } from '../hooks/useEventSource'
 import { usePolling, useApi } from '../hooks/useApi'
 import {
   PageSpinner, StatCard, PnlValue, StatusBadge,
@@ -11,14 +12,16 @@ import PnlCharts from '../components/PnlCharts'
 export default function DashboardPage() {
   const { user } = useAuth()
   const { data: pos,  loading: posLoading  } = usePolling(() => positions.list(), 30_000)
-  const { data: recent }                      = usePolling(() => orders.list({ limit: 8 }), 30_000)
+  const { data: deliveries, refetch: refetchDel } = usePolling(() => orders.deliveries({ limit: 8 }), 30_000)
+  useEventSource('/api/events', 'delivery', () => refetchDel())
   const { data: sub }                         = useApi(() => billing.subscription())
+  const { data: pnlDash }                     = usePolling(() => pnl.dashboard(), 15_000)
 
   const openPos      = (pos || []).filter(p => Math.abs(p.quantity) > 1e-9)
-  const dailyPnl     = openPos.reduce((sum, p) => sum + (p.daily_realized_pnl || 0), 0)
-  const totalPnl     = openPos.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
-  const totalUnrealized = openPos.reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0)
-  const hasLivePnl   = openPos.some(p => p.unrealized_pnl != null)
+  const dailyPnl     = pnlDash?.daily_realized ?? 0
+  const totalPnl     = pnlDash?.total_realized ?? 0
+  const totalUnrealized = pnlDash?.total_unrealized ?? 0
+  const hasLivePnl   = totalUnrealized !== 0 || openPos.some(p => p.unrealized_pnl != null)
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -48,7 +51,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Open positions"
-          value={posLoading ? '—' : openPos.length}
+          value={pnlDash ? pnlDash.open_positions : (posLoading ? '—' : openPos.length)}
           sub="Active across all brokers"
         />
         <StatCard
@@ -63,65 +66,44 @@ export default function DashboardPage() {
         <UsageBar used={sub.orders_this_period} total={sub.orders_this_period + sub.orders_remaining} />
       )}
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Open Positions */}
-        <section className="panel overflow-hidden">
-          <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
-            <h2 className="font-display font-semibold text-base-100">Open Positions</h2>
-            <span className="text-xs text-base-400 font-mono">
-              {posLoading ? '…' : `${openPos.length} active`}
-            </span>
+      {/* Open Positions — full width */}
+      <section className="panel overflow-hidden">
+        <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
+          <h2 className="font-display font-semibold text-base-100">Open Positions</h2>
+          <span className="text-xs text-base-400 font-mono">
+            {posLoading ? '…' : `${openPos.length} active`}
+          </span>
+        </div>
+        {posLoading ? (
+          <div className="flex justify-center py-10"><PageSpinner /></div>
+        ) : openPos.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="text-base-500 text-2xl mb-2">📭</div>
+            <div className="text-base-300 text-sm">No open positions</div>
           </div>
-          {posLoading ? (
-            <div className="flex justify-center py-10"><PageSpinner /></div>
-          ) : openPos.length === 0 ? (
-            <EmptyState
-              icon="📭"
-              title="No open positions"
-              description="Submit a webhook alert to open your first position."
-            />
-          ) : (
-            <>
-              <div className="divide-y divide-base-800">
-                {openPos.map(p => <PositionRow key={p.id} pos={p} />)}
-              </div>
-              {/* Totals footer */}
-              <div className="px-5 py-3 border-t border-base-700 bg-base-800/30 flex items-center justify-between">
-                <span className="text-xs text-base-400">Total realized P&L</span>
-                <div className="flex gap-6">
-                  <div className="text-right">
-                    <div className="text-[10px] text-base-500 mb-0.5">Today</div>
-                    <PnlValue value={dailyPnl} prefix="$" decimals={2} />
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[10px] text-base-500 mb-0.5">All time</div>
-                    <PnlValue value={totalPnl} prefix="$" decimals={2} />
-                  </div>
+        ) : (
+          <>
+            <div className="divide-y divide-base-800">
+              {openPos.map(p => <PositionRow key={p.id} pos={p} />)}
+            </div>
+            {/* Totals footer */}
+            <div className="px-5 py-3 border-t border-base-700 bg-base-800/30 flex items-center justify-between">
+              <span className="text-xs text-base-400">Total realized P&L</span>
+              <div className="flex gap-6">
+                <div className="text-right">
+                  <div className="text-[10px] text-base-500 mb-0.5">Today</div>
+                  <PnlValue value={dailyPnl} prefix="$" decimals={2} />
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] text-base-500 mb-0.5">All time</div>
+                  <PnlValue value={totalPnl} prefix="$" decimals={2} />
                 </div>
               </div>
-            </>
-          )}
-        </section>
-
-        {/* Recent Orders */}
-        <section className="panel overflow-hidden">
-          <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
-            <h2 className="font-display font-semibold text-base-100">Recent Orders</h2>
-            <a href="/orders" className="text-xs text-accent hover:text-accent-dim transition-colors">
-              View all →
-            </a>
-          </div>
-          {!recent ? (
-            <div className="flex justify-center py-10"><PageSpinner /></div>
-          ) : recent.length === 0 ? (
-            <EmptyState icon="📋" title="No orders yet" />
-          ) : (
-            <div className="divide-y divide-base-800">
-              {recent.map(o => <OrderRow key={o.id} order={o} />)}
             </div>
-          )}
-        </section>
-      </div>
+          </>
+        )}
+      </section>
+
       {/* P&L Charts */}
       <div className="space-y-4">
         <SectionHeader
@@ -130,6 +112,25 @@ export default function DashboardPage() {
         />
         <PnlCharts />
       </div>
+
+      {/* Recent Relays — full width */}
+      <section className="panel overflow-hidden">
+        <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
+          <h2 className="font-display font-semibold text-base-100">Recent Relays</h2>
+          <a href="/webhook-setup" className="text-xs text-accent hover:text-accent-dim transition-colors">
+            View all →
+          </a>
+        </div>
+        {!deliveries ? (
+          <div className="flex justify-center py-10"><PageSpinner /></div>
+        ) : deliveries.length === 0 ? (
+          <EmptyState icon="📡" title="No deliveries yet" />
+        ) : (
+          <div className="divide-y divide-base-800">
+            {deliveries.map(d => <DeliveryRow key={d.id} d={d} />)}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
@@ -251,30 +252,48 @@ function secondsAgo(isoString) {
   return diff < 0 ? 0 : diff
 }
 
-function OrderRow({ order }) {
-  const isBuy   = order.action === 'buy'
-  const isClose = order.action === 'close'
-  const color   = isBuy
-    ? 'bg-accent/10 text-accent'
-    : isClose ? 'bg-warn/10 text-warn' : 'bg-loss/10 text-loss'
+function DeliveryRow({ d }) {
+  const target = (() => {
+    try {
+      const p = JSON.parse(d.raw_payload || '{}')
+      return { action: (p.action || '').toUpperCase(), sym: p.symbol || '', acct: p.account || 'primary', broker: p.broker || '' }
+    } catch { return null }
+  })()
+
   return (
-    <div className="px-5 py-3 flex items-center gap-3 hover:bg-base-800/40 transition-colors">
-      <div className={clsx(
-        'text-[10px] font-mono font-bold px-1.5 py-0.5 rounded w-10 text-center', color
-      )}>
-        {order.action.toUpperCase()}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-mono text-base-100">{order.symbol}</div>
-        <div className="flex items-center gap-1 text-xs text-base-400">
-          <BrokerIcon broker={order.broker} size={12} />
-          {brokerLabel(order.broker)} · {order.account} · {new Date(order.created_at).toLocaleTimeString()}
-        </div>
-      </div>
-      <div className="text-right flex items-center gap-2">
-        <Mono className="text-base-400 text-xs">{order.quantity.toLocaleString()}</Mono>
-        <StatusBadge status={order.status} />
-      </div>
+    <div className="px-5 py-3 flex items-center gap-4 hover:bg-base-800/40 transition-colors">
+      <span className="font-mono text-xs text-base-400 w-20 flex-shrink-0">
+        {new Date(d.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+      </span>
+      <StatusBadge status={d.outcome} />
+      {target && (
+        <span className="font-mono text-xs text-base-300 truncate flex-shrink-0" style={{maxWidth: '20rem'}}>
+          <span className={target.action === 'BUY' ? 'text-accent' : target.action === 'SELL' ? 'text-loss' : 'text-warn'}>{target.action}</span>
+          {' '}{target.sym}
+          <span className="text-base-500">{' '}TradingView → </span>
+          {target.broker && <BrokerIcon broker={target.broker} size={12} className="mx-0.5" />}
+          {d.account_display_name || target.acct}
+        </span>
+      )}
+      {d.algo && (
+        <span className="font-mono text-[10px] text-base-400 bg-base-800 px-1.5 py-0.5 rounded flex-shrink-0">
+          {d.algo}
+        </span>
+      )}
+      <span className="font-mono text-xs text-base-500 w-14 flex-shrink-0 text-right">
+        {d.duration_ms ? `${d.duration_ms.toFixed(0)}ms` : '—'}
+      </span>
+      <span className="font-mono text-xs text-base-500 flex-1">{d.source_ip || '—'}</span>
+      {d.error_detail && (
+        <span className="text-xs text-loss font-mono truncate max-w-[12rem] flex-shrink-0">
+          {d.error_detail.slice(0, 50)}{d.error_detail.length > 50 ? '…' : ''}
+        </span>
+      )}
+      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0 ${
+        d.auth_passed ? 'bg-accent/10 text-accent' : 'bg-loss/10 text-loss'
+      }`}>
+        {d.auth_passed ? 'ok' : 'fail'}
+      </span>
     </div>
   )
 }

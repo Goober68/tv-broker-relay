@@ -187,6 +187,7 @@ export const pnl = {
     if (end) params.set('end', end)
     return api.get(`/api/pnl/summary?${params}`)
   },
+  dashboard: () => api.get('/api/pnl/dashboard'),
 }
 
 export const positions = {

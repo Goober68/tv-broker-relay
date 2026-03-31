@@ -11,17 +11,17 @@ export default {
       colors: {
         // Base — near-black with a very slight warm tint
         base: {
-          950: '#0a0a0c',
-          900: '#111114',
-          800: '#18181d',
-          700: '#222228',
-          600: '#2e2e36',
-          500: '#3d3d47',
-          400: '#5a5a68',
-          300: '#7e7e90',
-          200: '#a8a8b8',
-          100: '#d4d4e0',
-          50:  '#eeeef4',
+          950: '#0c0c0f',
+          900: '#131318',
+          800: '#1e1e26',
+          700: '#2c2c38',
+          600: '#40404e',
+          500: '#585868',
+          400: '#808094',
+          300: '#a0a0b4',
+          200: '#c0c0d0',
+          100: '#dcdce8',
+          50:  '#f0f0f6',
         },
         // Accent — electric green (profit, active, success)
         accent: {

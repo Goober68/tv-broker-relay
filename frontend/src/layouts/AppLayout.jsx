@@ -1,5 +1,5 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { useState } from 'react'
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
 import { useAuth } from '../lib/auth-context'
 
@@ -21,7 +21,12 @@ const ADMIN_ITEMS = [
 export default function AppLayout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Close drawer on navigation
+  useEffect(() => { setMobileOpen(false) }, [location.pathname])
 
   const handleLogout = async () => {
     setLoggingOut(true)
@@ -29,82 +34,121 @@ export default function AppLayout() {
     navigate('/login')
   }
 
-  return (
-    <div className="flex h-screen bg-base-950 overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-56 flex-shrink-0 flex flex-col border-r border-base-800">
-        {/* Wordmark */}
-        <div className="h-14 flex items-center px-5 border-b border-base-800">
-          <span className="font-display font-bold text-base-50 tracking-tight">
-            relay<span className="text-accent">.</span>
-          </span>
-        </div>
+  const sidebarContent = (
+    <>
+      {/* Wordmark */}
+      <div className="h-14 flex items-center px-5 border-b border-base-800">
+        <span className="font-display font-bold text-base-50 tracking-tight">
+          relay<span className="text-accent">.</span>
+        </span>
+        <sup className="text-[9px] font-mono text-base-500 ml-1 -mt-2">beta</sup>
+      </div>
 
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
-          {NAV_ITEMS.map(item => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => clsx('nav-item', isActive && 'active')}
-            >
-              <span className="w-4 h-4 flex-shrink-0">{item.icon}</span>
-              {item.label}
-            </NavLink>
-          ))}
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
+        {NAV_ITEMS.map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) => clsx('nav-item', isActive && 'active')}
+          >
+            <span className="w-4 h-4 flex-shrink-0">{item.icon}</span>
+            {item.label}
+          </NavLink>
+        ))}
 
-          {user?.is_admin && (
-            <>
-              <div className="pt-4 pb-1 px-3">
-                <span className="text-[10px] font-medium text-base-500 uppercase tracking-widest">
-                  Admin
-                </span>
-              </div>
-              {ADMIN_ITEMS.map(item => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) => clsx('nav-item', isActive && 'active')}
-                >
-                  <span className="w-4 h-4 flex-shrink-0">{item.icon}</span>
-                  {item.label}
-                </NavLink>
-              ))}
-            </>
-          )}
-        </nav>
-
-        {/* User footer */}
-        <div className="border-t border-base-800 p-3">
-          <div className="flex items-center gap-3 px-2 py-2 rounded-md">
-            <div className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
-              <span className="text-accent text-xs font-bold font-mono">
-                {user?.email?.[0]?.toUpperCase() ?? '?'}
+        {user?.is_admin && (
+          <>
+            <div className="pt-4 pb-1 px-3">
+              <span className="text-[10px] font-medium text-base-500 uppercase tracking-widest">
+                Admin
               </span>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-base-200 truncate">{user?.email}</div>
-              <div className="text-[10px] text-base-500 font-mono">{user?.plan_name ?? 'free'}</div>
-            </div>
+            {ADMIN_ITEMS.map(item => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => clsx('nav-item', isActive && 'active')}
+              >
+                <span className="w-4 h-4 flex-shrink-0">{item.icon}</span>
+                {item.label}
+              </NavLink>
+            ))}
+          </>
+        )}
+      </nav>
+
+      {/* User footer */}
+      <div className="border-t border-base-800 p-3">
+        <div className="flex items-center gap-3 px-2 py-2 rounded-md">
+          <div className="w-7 h-7 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+            <span className="text-accent text-xs font-bold font-mono">
+              {user?.email?.[0]?.toUpperCase() ?? '?'}
+            </span>
           </div>
-          <button
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="nav-item w-full mt-1 text-base-400 hover:text-loss"
-          >
-            <span className="w-4 h-4"><LogoutIcon /></span>
-            {loggingOut ? 'Logging out…' : 'Log out'}
-          </button>
-          <div className="flex gap-3 mt-2 px-2">
-            <a href="/privacy" className="text-[10px] text-base-600 hover:text-base-400">Privacy</a>
-            <a href="/terms" className="text-[10px] text-base-600 hover:text-base-400">Terms</a>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-base-200 truncate">{user?.email}</div>
+            <div className="text-[10px] text-base-500 font-mono">{user?.plan_name ?? 'free'}</div>
           </div>
         </div>
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="nav-item w-full mt-1 text-base-400 hover:text-loss"
+        >
+          <span className="w-4 h-4"><LogoutIcon /></span>
+          {loggingOut ? 'Logging out…' : 'Log out'}
+        </button>
+        <div className="flex gap-3 mt-2 px-2">
+          <a href="/privacy" className="text-[10px] text-base-600 hover:text-base-400">Privacy</a>
+          <a href="/terms" className="text-[10px] text-base-600 hover:text-base-400">Terms</a>
+        </div>
+      </div>
+    </>
+  )
+
+  return (
+    <div className="flex h-screen bg-base-950 overflow-hidden">
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-56 flex-shrink-0 flex-col border-r border-base-800">
+        {sidebarContent}
+      </aside>
+
+      {/* Mobile overlay */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Mobile drawer */}
+      <aside className={clsx(
+        'fixed inset-y-0 left-0 z-50 w-64 flex flex-col bg-base-950 border-r border-base-800 transform transition-transform duration-200 md:hidden',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full'
+      )}>
+        {sidebarContent}
       </aside>
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-6 py-8 animate-fade-in">
+        {/* Mobile top bar */}
+        <div className="md:hidden sticky top-0 z-30 h-14 flex items-center gap-3 px-4 border-b border-base-800 bg-base-950">
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="p-1.5 rounded-md hover:bg-base-800 text-base-300"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+              <path fillRule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10zm0 5.25a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <span className="font-display font-bold text-base-50 tracking-tight text-sm">
+            relay<span className="text-accent">.</span>
+          </span>
+          <sup className="text-[8px] font-mono text-base-500 -ml-0.5 -mt-2">beta</sup>
+        </div>
+
+        <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8 animate-fade-in">
           <Outlet />
         </div>
       </main>

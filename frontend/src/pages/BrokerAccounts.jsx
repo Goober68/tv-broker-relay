@@ -528,7 +528,7 @@ function AccountCard({ account, expanded, onToggle, onRefresh,
     <div className="panel overflow-hidden">
       <div className="px-5 py-4 flex items-center gap-4">
         <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={onToggle}>
-          <BrokerBadge broker={account.broker} />
+          <BrokerBadge broker={account.broker} accountType={account.account_type} />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-base-100">
               {account.display_name || `${brokerLabel(account.broker)} / ${account.account_alias}`}
@@ -1009,7 +1009,7 @@ function ImportHistory({ accountId }) {
   )
 }
 
-function BrokerBadge({ broker }) {
+function BrokerBadge({ broker, accountType }) {
   const colors = {
     oanda:     'bg-blue-500/10',
     ibkr:      'bg-purple-500/10 text-purple-400',
@@ -1018,9 +1018,9 @@ function BrokerBadge({ broker }) {
   }
   const hasLogo = ['oanda', 'tradovate'].includes(broker)
   return (
-    <div className={`flex items-center justify-center text-xs font-mono font-bold px-2 py-1 rounded uppercase ${colors[broker] || 'bg-base-700 text-base-300'}`}>
+    <div className={`flex items-center justify-center text-xs font-mono font-bold px-2 py-1 rounded uppercase w-28 ${colors[broker] || 'bg-base-700 text-base-300'}`}>
       {hasLogo ? (
-        <BrokerLogo broker={broker} height={20} />
+        <BrokerLogo broker={broker} accountType={accountType} height={20} />
       ) : broker}
     </div>
   )

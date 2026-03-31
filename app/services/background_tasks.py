@@ -1580,5 +1580,25 @@ def start_background_tasks() -> list[asyncio.Task]:
             _run_forever("tradovate_token_refresh", 2700, _tradovate_token_refresh_once),
             name="tradovate_token_refresh",
         ),
+        asyncio.create_task(
+            # Unified P&L engine: incremental FIFO processing
+            _run_forever("pnl_engine", settings.pnl_engine_interval_seconds, _pnl_engine_tick),
+            name="pnl_engine",
+        ),
+        asyncio.create_task(
+            # P&L reconciliation: full recalculate to catch drift
+            _run_forever("pnl_reconcile", settings.pnl_reconcile_interval_seconds, _pnl_reconcile_tick),
+            name="pnl_reconcile",
+        ),
     ]
     return tasks
+
+
+async def _pnl_engine_tick():
+    from app.services.pnl_engine import _pnl_engine_once
+    await _pnl_engine_once()
+
+
+async def _pnl_reconcile_tick():
+    from app.services.pnl_engine import _pnl_reconcile_once
+    await _pnl_reconcile_once()

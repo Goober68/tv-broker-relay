@@ -40,6 +40,8 @@ export default function WebhookSetupPage() {
     instrument_type: "forex",
     order_type: "market",
     quantity: 1000,
+    algo_id: "my-strategy",
+    algo_version: "1.0",
     comment: "{{strategy.order.comment}}"
   }, null, 2) : null
 
@@ -92,9 +94,9 @@ export default function WebhookSetupPage() {
 
       {/* Delivery log */}
       <section className="panel overflow-hidden">
-        <div className="px-5 py-4 border-b border-base-800 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-base-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h2 className="font-display font-semibold text-base-100">Recent deliveries</h2>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <label className="flex items-center gap-1.5 text-xs text-base-400">
               <span>Filter by:</span>
               <select
@@ -274,6 +276,11 @@ function DeliveryRow({ delivery: d, inspecting, setInspecting }) {
             {d.account_display_name || target.acct}
           </span>
         )}
+        {d.algo && (
+          <span className="font-mono text-[10px] text-base-400 bg-base-800 px-1.5 py-0.5 rounded flex-shrink-0">
+            {d.algo}
+          </span>
+        )}
         <span className="font-mono text-xs text-base-500 w-16 flex-shrink-0">
           {d.duration_ms ? `${d.duration_ms.toFixed(0)}ms` : '—'}
         </span>
@@ -318,7 +325,7 @@ function DeliveryRow({ delivery: d, inspecting, setInspecting }) {
 
           {/* Three-panel JSON view */}
           {(inboundJson || outboundJson || responseJson) && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {/* Panel 1: what TradingView sent */}
               <div className="min-w-0">
                 <div className="flex items-center justify-between mb-2">

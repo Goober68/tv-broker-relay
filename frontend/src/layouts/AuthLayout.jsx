@@ -21,6 +21,7 @@ export default function AuthLayout() {
           <span className="font-display font-bold text-3xl text-base-50 tracking-tight">
             relay<span className="text-accent">.</span>
           </span>
+          <sup className="text-[10px] font-mono text-base-500 ml-1 -mt-3">beta</sup>
           <p className="text-base-400 text-sm mt-2">
             TradingView → Broker Execution
           </p>

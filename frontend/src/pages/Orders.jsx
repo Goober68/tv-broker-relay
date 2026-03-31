@@ -31,13 +31,13 @@ export default function OrdersPage() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3 panel p-4">
         <input
-          className="input w-36 py-1.5"
+          className="input w-full sm:w-36 py-1.5"
           placeholder="Symbol…"
           value={symbol}
           onChange={e => setSymbol(e.target.value)}
         />
         <select
-          className="input w-36 py-1.5"
+          className="input w-full sm:w-36 py-1.5"
           value={broker}
           onChange={e => setBroker(e.target.value)}
         >
@@ -47,7 +47,7 @@ export default function OrdersPage() {
           ))}
         </select>
         <select
-          className="input w-40 py-1.5"
+          className="input w-full sm:w-40 py-1.5"
           value={status}
           onChange={e => setStatus(e.target.value)}
         >
@@ -75,10 +75,11 @@ export default function OrdersPage() {
                   <th>Action</th>
                   <th>Type</th>
                   <th>Qty</th>
-                  <th>Broker Qty</th>
+
                   <th>Price</th>
                   <th>Fill price</th>
-                  <th>Broker / Account</th>
+                  <th>Account</th>
+                  <th>Algo</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -139,16 +140,6 @@ function OrderRow({ order }) {
         <td><span className="text-base-400 text-xs font-mono">{order.order_type}</span></td>
         <td><Mono>{order.quantity.toLocaleString()}</Mono></td>
         <td>
-          {order.broker_quantity != null && order.broker_quantity !== order.quantity ? (
-            <div className="text-right">
-              <Mono className="text-warn">{order.broker_quantity.toLocaleString()}</Mono>
-              <div className="text-[10px] text-base-600 font-mono">randomized</div>
-            </div>
-          ) : (
-            <Mono className="text-base-500">—</Mono>
-          )}
-        </td>
-        <td>
           <Mono className="text-base-400">
             {order.price ? order.price.toFixed(5) : '—'}
           </Mono>
@@ -164,6 +155,15 @@ function OrderRow({ order }) {
             {brokerLabel(order.broker)}
           </span>
           <div className="text-[10px] font-mono text-base-600">{order.account}</div>
+        </td>
+        <td>
+          {order.algo_id ? (
+            <span className="text-[10px] font-mono text-base-400">
+              {order.algo_id}{order.algo_version ? `.${order.algo_version}` : ''}
+            </span>
+          ) : (
+            <span className="text-base-600 text-xs">—</span>
+          )}
         </td>
         <td><StatusBadge status={order.status} /></td>
       </tr>
@@ -183,7 +183,7 @@ function OrderRow({ order }) {
                 </div>
               )}
               {(order.broker_request || order.broker_response) && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {order.broker_request && (
                     <div>
                       <div className="text-[10px] font-mono text-base-500 uppercase tracking-wider mb-1.5">

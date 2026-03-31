@@ -20,7 +20,7 @@ const VIEWS = [
 ]
 
 export default function PnlCharts() {
-  const [period, setPeriod] = useState('daily')
+  const [period, setPeriod] = useState('15min')
   const [view,   setView]   = useState('period')
 
   const { data, loading, refetch } = useApi(
@@ -31,7 +31,7 @@ export default function PnlCharts() {
   return (
     <div className="space-y-4">
       {/* Controls */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {/* Period toggle */}
           <div className="flex bg-base-800 rounded-md p-0.5 gap-0.5">
@@ -91,23 +91,63 @@ export default function PnlCharts() {
           title="No trade history yet"
           description="P&L charts will appear once orders start filling."
         />
-      ) : (
-        <div className={clsx(
-          'grid gap-4',
-          data.length === 1 ? 'grid-cols-1' :
-          data.length === 2 ? 'grid-cols-2' :
-          'grid-cols-2 xl:grid-cols-3'
-        )}>
-          {data.map(account => (
-            <AccountPnlCard
-              key={`${account.broker}-${account.account}`}
-              account={account}
-              period={period}
-              view={view}
-            />
-          ))}
-        </div>
-      )}
+      ) : (() => {
+        // Build unified time domain across all accounts
+        const allPeriods = new Set()
+        for (const acct of data) {
+          for (const bar of acct.bars) {
+            allPeriods.add(bar.period_start)
+          }
+        }
+        const sortedPeriods = [...allPeriods].sort()
+
+        // Pad each account's bars to cover the full domain
+        const paddedData = data.map(account => {
+          const barMap = new Map(account.bars.map(b => [b.period_start, b]))
+          let cumReal = 0
+          // Find the cumulative before the visible window
+          const firstVisible = sortedPeriods[0]
+          for (const bar of account.bars) {
+            if (bar.period_start < firstVisible) {
+              cumReal = bar.cumulative_realized
+            }
+          }
+          const paddedBars = sortedPeriods.map(ps => {
+            const existing = barMap.get(ps)
+            if (existing) {
+              cumReal = existing.cumulative_realized
+              return existing
+            }
+            return {
+              period_start: ps,
+              realized_pnl: 0,
+              unrealized_pnl: 0,
+              cumulative_realized: cumReal,
+              cumulative_total: cumReal,
+              order_count: 0,
+            }
+          })
+          return { ...account, bars: paddedBars }
+        })
+
+        return (
+          <div className={clsx(
+            'grid gap-4',
+            data.length === 1 ? 'grid-cols-1' :
+            data.length === 2 ? 'grid-cols-2' :
+            'grid-cols-2 xl:grid-cols-3'
+          )}>
+            {paddedData.map(account => (
+              <AccountPnlCard
+                key={`${account.broker}-${account.account}`}
+                account={account}
+                period={period}
+                view={view}
+              />
+            ))}
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -224,24 +264,25 @@ function AccountPnlCard({ account, period, view }) {
                 <>
                   {/* Cumulative realized line */}
                   <Line
-                    type="monotone"
+                    type="linear"
                     dataKey="cumulative_realized"
                     name="Cum. Realized"
-                    stroke="#00e5a0"
+                    stroke={isPositive ? '#00e5a0' : '#ff4d4d'}
                     strokeWidth={1.5}
                     dot={false}
-                    activeDot={{ r: 3, fill: '#00e5a0' }}
+                    activeDot={{ r: 3, fill: isPositive ? '#00e5a0' : '#ff4d4d' }}
                   />
                   {/* Cumulative total line (includes unrealized) */}
                   <Line
-                    type="monotone"
+                    type="linear"
                     dataKey="cumulative_total"
                     name="Cum. Total"
-                    stroke="#7eb8ff"
+                    stroke={isPositive ? '#00e5a0' : '#ff4d4d'}
                     strokeWidth={1.5}
                     strokeDasharray="4 2"
                     dot={false}
-                    activeDot={{ r: 3, fill: '#7eb8ff' }}
+                    activeDot={{ r: 3, fill: isPositive ? '#00e5a0' : '#ff4d4d' }}
+                    strokeOpacity={0.5}
                   />
                 </>
               )}
@@ -273,7 +314,7 @@ function CustomTooltip({ active, payload, label, period }) {
 function fmtLabel(isoString, period) {
   const d = new Date(isoString)
   if (period === '15min') {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleTimeString([], { hour: '2-digit', hour12: false })
   }
   if (period === 'daily') {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' })

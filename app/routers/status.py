@@ -76,6 +76,8 @@ class OrderOut(BaseModel):
     broker_response: str | None = None
     filled_quantity: float
     avg_fill_price: float | None
+    algo_id: str | None = None
+    algo_version: str | None = None
     comment: str | None
     error_message: str | None
 
@@ -180,6 +182,7 @@ class DeliveryOut(BaseModel):
     broker_request:  str | None = None   # outbound JSON sent to broker (from joined order row)
     broker_response: str | None = None   # response body received from broker
     account_display_name: str | None = None
+    algo: str | None = None
 
     class Config:
         from_attributes = False  # manual construction — not direct ORM mapping
@@ -218,18 +221,29 @@ async def list_webhook_deliveries(
     display_names = {r[0]: r[1] for r in acct_result.fetchall() if r[1]}
 
     import json as _json
-    def _get_display_name(raw_payload: str | None) -> str | None:
+    def _parse_payload(raw_payload: str | None) -> dict:
         if not raw_payload:
-            return None
+            return {}
         try:
-            p = _json.loads(raw_payload)
-            alias = p.get("account", "primary")
-            return display_names.get(alias)
+            return _json.loads(raw_payload)
         except Exception:
-            return None
+            return {}
 
-    return [
-        DeliveryOut(
+    def _get_display_name(p: dict) -> str | None:
+        alias = p.get("account", "primary")
+        return display_names.get(alias)
+
+    def _get_algo(p: dict) -> str | None:
+        algo_id = p.get("algo_id")
+        if not algo_id:
+            return None
+        algo_ver = p.get("algo_version")
+        return f"{algo_id}.{algo_ver}" if algo_ver else algo_id
+
+    result = []
+    for d, broker_request, broker_response, order_error in rows:
+        p = _parse_payload(d.raw_payload)
+        result.append(DeliveryOut(
             id=d.id,
             created_at=d.created_at,
             source_ip=d.source_ip,
@@ -243,10 +257,10 @@ async def list_webhook_deliveries(
             user_agent=d.user_agent,
             broker_request=broker_request,
             broker_response=broker_response,
-            account_display_name=_get_display_name(d.raw_payload),
-        )
-        for d, broker_request, broker_response, order_error in rows
-    ]
+            account_display_name=_get_display_name(p),
+            algo=_get_algo(p),
+        ))
+    return result
 
 
 
@@ -511,6 +525,60 @@ def _infer_instrument_type(broker: str, symbol: str) -> str:
     if broker == "ibkr":
         return "equity"   # best guess — instrument_map has the real type
     return "forex"
+
+
+# ── P&L Dashboard (unified engine) ────────────────────────────────────────────
+
+class DashboardPnl(BaseModel):
+    daily_realized: float
+    total_realized: float
+    total_unrealized: float
+    open_positions: int
+
+
+@router.get("/pnl/dashboard", response_model=DashboardPnl)
+async def get_pnl_dashboard(
+    tenant: Tenant = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Precomputed P&L totals from the unified engine."""
+    from sqlalchemy import text as sql_text
+
+    # Sum across all accounts from the P&L engine state
+    result = await db.execute(
+        sql_text("""
+            SELECT COALESCE(SUM(daily_realized), 0) as daily,
+                   COALESCE(SUM(cumulative_realized), 0) as total
+            FROM account_pnl_state
+            WHERE tenant_id = :tid
+        """),
+        {"tid": str(tenant.id)},
+    )
+    row = result.fetchone()
+
+    # Unrealized from positions table (populated by broker poll / stream)
+    unreal_result = await db.execute(
+        select(func.coalesce(func.sum(Position.unrealized_pnl), 0)).where(
+            Position.tenant_id == tenant.id,
+            func.abs(Position.quantity) > 1e-9,
+        )
+    )
+    total_unrealized = float(unreal_result.scalar_one())
+
+    # Open position count
+    pos_count = await db.execute(
+        select(func.count(Position.id)).where(
+            Position.tenant_id == tenant.id,
+            func.abs(Position.quantity) > 1e-9,
+        )
+    )
+
+    return DashboardPnl(
+        daily_realized=round(row.daily, 2),
+        total_realized=round(row.total, 2),
+        total_unrealized=round(total_unrealized, 2),
+        open_positions=pos_count.scalar_one(),
+    )
 
 
 # ── P&L Summary ────────────────────────────────────────────────────────────────

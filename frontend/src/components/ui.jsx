@@ -19,7 +19,8 @@ const BROKER_ICONS = {
 
 const BROKER_LOGOS = {
   oanda: '/brokers/oanda.svg?v=1',
-  tradovate: '/brokers/tradovate.png?v=2',
+  tradovate: '/brokers/tradovate-dark.png?v=1',
+  'tradovate-prop': '/brokers/tradovate-prop.svg?v=1',
 }
 
 export function BrokerIcon({ broker, size = 16, className }) {
@@ -36,8 +37,10 @@ export function BrokerIcon({ broker, size = 16, className }) {
   )
 }
 
-export function BrokerLogo({ broker, height = 18, className }) {
-  const src = BROKER_LOGOS[broker]
+export function BrokerLogo({ broker, accountType, height = 18, className }) {
+  const isProp = accountType && accountType.startsWith('prop')
+  const key = (broker === 'tradovate' && isProp) ? 'tradovate-prop' : broker
+  const src = BROKER_LOGOS[key]
   if (!src) return null
   return (
     <img
