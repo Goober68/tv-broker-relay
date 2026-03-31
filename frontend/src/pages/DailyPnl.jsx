@@ -188,7 +188,7 @@ function DrawdownCell({ account }) {
     const textColor = remainPct < 10 ? 'text-loss' : remainPct < 25 ? 'text-warn' : 'text-base-400'
     return (
       <div className="flex items-center gap-1.5">
-        <div className="w-16 h-1.5 bg-base-700 rounded-full overflow-hidden">
+        <div className="w-16 h-1.5 bg-base-700 rounded-full overflow-hidden flex justify-end">
           <div className="h-full rounded-full transition-all" style={{ width: `${remainPct}%`, backgroundColor: barColor }} />
         </div>
         <span className={`font-mono text-[10px] ${textColor}`} style={remainPct < 50 ? { color: barColor } : {}}>
