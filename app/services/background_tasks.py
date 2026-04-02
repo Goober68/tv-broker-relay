@@ -1318,6 +1318,56 @@ async def _tradovate_token_refresh_once():
         await db.commit()
 
 
+# ── GTD Expiry ────────────────────────────────────────────────────────────────
+
+async def _gtd_expiry_once():
+    """
+    Cancel open orders whose expire_at has passed.
+    Handles brokers (like Tradovate startOrderStrategy) that don't support
+    native GTD — we enforce the expiry ourselves.
+    """
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(Order).where(
+                Order.status == "open",
+                Order.time_in_force == "GTD",
+                Order.expire_at.isnot(None),
+                Order.expire_at <= now,
+            )
+        )
+        expired_orders = result.scalars().all()
+
+        if not expired_orders:
+            return
+
+        logger.info(f"GTD expiry: found {len(expired_orders)} expired orders to cancel")
+
+        for order in expired_orders:
+            try:
+                if order.broker_order_id:
+                    broker = await get_broker_for_tenant(
+                        order.broker, order.account, order.tenant_id, db
+                    )
+                    cancelled = await broker.cancel_order(order.broker_order_id, order.account)
+                    if cancelled:
+                        logger.info(
+                            f"GTD expiry: cancelled order {order.id} "
+                            f"(broker_id={order.broker_order_id}) on {order.broker}"
+                        )
+                    else:
+                        logger.warning(
+                            f"GTD expiry: broker cancel failed for order {order.id} "
+                            f"(broker_id={order.broker_order_id}) — marking cancelled locally"
+                        )
+                order.status = OrderStatus.CANCELLED
+            except Exception:
+                logger.exception(f"GTD expiry: error cancelling order {order.id}")
+                order.status = OrderStatus.CANCELLED
+
+        await db.commit()
+
+
 # ── Task Launcher ──────────────────────────────────────────────────────────────
 
 def start_background_tasks() -> list[asyncio.Task]:
@@ -1387,6 +1437,11 @@ def start_background_tasks() -> list[asyncio.Task]:
             # P&L reconciliation: full recalculate to catch drift
             _run_forever("pnl_reconcile", settings.pnl_reconcile_interval_seconds, _pnl_reconcile_tick),
             name="pnl_reconcile",
+        ),
+        asyncio.create_task(
+            # GTD expiry: cancel expired orders every 15s
+            _run_forever("gtd_expiry", 15, _gtd_expiry_once),
+            name="gtd_expiry",
         ),
     ]
     return tasks

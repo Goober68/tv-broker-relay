@@ -115,9 +115,10 @@ class EtradeBroker(BrokerBase):
         url = f"{self.base_url}/v1/accounts/{account_id}/orders/place"
         action_map = {OrderAction.BUY: "BUY", OrderAction.SELL: "SELL"}
         order_type_map = {
-            OrderType.MARKET: "MARKET",
-            OrderType.LIMIT:  "LIMIT",
-            OrderType.STOP:   "STOP",
+            OrderType.MARKET:     "MARKET",
+            OrderType.LIMIT:      "LIMIT",
+            OrderType.STOP:       "STOP",
+            OrderType.STOP_LIMIT: "STOP_LIMIT",
         }
 
         # Extended hours session
@@ -138,7 +139,7 @@ class EtradeBroker(BrokerBase):
                     "quantity": int(order.quantity),
                     "orderTerm": order_term,
                     "marketSession": market_session,
-                    "stopPrice": order.price if order.order_type == OrderType.STOP else 0,
+                    "stopPrice": order.price if order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT) else 0,
                     "Instrument": [{
                         "Product": {
                             "securityType": "EQ",

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.models.order import Order, OrderStatus, OrderType, InstrumentType, DEFAULT_FUTURES_MULTIPLIERS, OrderAction
 from app.models.broker_account import BrokerAccount
 from app.schemas.webhook import WebhookPayload
-from app.brokers.registry import get_broker_for_tenant
+from app.brokers.registry import get_broker_for_tenant, build_broker_from_account
 from app.services.state import get_or_create_position, apply_fill_to_position
 from app.services.plans import increment_order_count
 from app.services.plan_enforcer import PlanEnforcer
@@ -38,8 +38,19 @@ def _dedup_key(tenant_id: uuid.UUID, payload: WebhookPayload) -> str:
 async def _get_pending_exposure(
     db: AsyncSession, tenant_id: uuid.UUID, broker: str, account: str, symbol: str
 ) -> float:
+    from sqlalchemy import func, case, literal_column
     result = await db.execute(
-        select(Order).where(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Order.action == "buy", Order.quantity),
+                        else_=-Order.quantity,
+                    )
+                ),
+                literal_column("0.0"),
+            )
+        ).where(
             Order.tenant_id == tenant_id,
             Order.broker == broker,
             Order.account == account,
@@ -47,12 +58,7 @@ async def _get_pending_exposure(
             Order.status == "open",
         )
     )
-    open_orders = result.scalars().all()
-    total = 0.0
-    for o in open_orders:
-        signed = o.quantity if o.action.value == "buy" else -o.quantity
-        total += signed
-    return total
+    return float(result.scalar_one())
 
 
 async def _create_trail_trigger(db, order, payload, result):
@@ -177,7 +183,6 @@ async def process_webhook(
       7.  Update state + increment order counter
     """
     settings = get_settings()
-
     # --- 1. Deduplication ---
     dedup_key = _dedup_key(tenant_id, payload)
     now = datetime.now(timezone.utc)
@@ -187,6 +192,7 @@ async def process_webhook(
         logger.warning(f"Duplicate signal suppressed: {dedup_key}")
         raise ValueError(f"Duplicate signal suppressed (within {settings.duplicate_window_seconds}s window)")
     _recent_signals[dedup_key] = now
+
 
     # --- 2. Cancel-replace ---
     replaced_order: Order | None = None
@@ -215,10 +221,13 @@ async def process_webhook(
         if payload.order_type.value != "market" and replaced_order is None:
             await enforcer.check_open_orders(db)
 
+
     # --- 3b. Symbol translation via instrument_map ---
     # Check all accounts for this broker (not just the target account) so symbol
     # mappings only need to be configured once per broker.
+    # Also cache the target broker_account to avoid a redundant DB query later.
     original_symbol = payload.symbol
+    cached_broker_account = None
     broker_accounts = await db.execute(
         select(BrokerAccount).where(
             BrokerAccount.tenant_id == tenant_id,
@@ -227,6 +236,8 @@ async def process_webhook(
         )
     )
     for ba in broker_accounts.scalars().all():
+        if ba.account_alias == payload.account:
+            cached_broker_account = ba
         if ba.instrument_map:
             instr = ba.instrument_map.get(payload.symbol, {})
             if isinstance(instr, dict) and instr.get("target_symbol"):
@@ -235,7 +246,8 @@ async def process_webhook(
                     f"(via instrument_map on {ba.account_alias})"
                 )
                 payload.symbol = instr["target_symbol"]
-                break
+
+
 
     # --- 4. Risk checks ---
     pos = await get_or_create_position(
@@ -265,6 +277,7 @@ async def process_webhook(
         raise ValueError(
             f"Order rejected: daily loss limit reached ({pos.daily_realized_pnl:.2f})"
         )
+
 
     # --- 5. Create Order record ---
     # Resolve multiplier: order.multiplier captures it at submission time for P&L accuracy
@@ -297,29 +310,24 @@ async def process_webhook(
                 )
 
     if needs_conversion and payload.broker == "tradovate":
-        # Fetch live quote from Tradovate for accurate offset conversion
-        logger.info(f"{payload.symbol}: fetching Tradovate quote for {payload.sl_tp_type} conversion")
-        try:
-            broker_adapter = await get_broker_for_tenant(
-                payload.broker, payload.account, tenant_id, db
+        # Use cached stream price first (instant), fall back to payload price
+        from app.services.tradovate_stream import get_manager as get_tv_manager
+        tv_manager = get_tv_manager("tradovate", payload.account)
+        cached_quote = tv_manager.get_price(payload.symbol) if tv_manager else None
+        if cached_quote and cached_quote.get("mid"):
+            entry_price = cached_quote["mid"]
+            logger.info(
+                f"{payload.symbol}: using Tradovate stream mid {entry_price:.2f} "
+                f"as entry price for {payload.sl_tp_type} SL/TP conversion"
+                + (f" (overriding payload price {payload.price})" if payload.price else "")
             )
-            from app.brokers.tradovate import TradovateBroker
-            if isinstance(broker_adapter, TradovateBroker):
-                quote = await broker_adapter.get_quote(payload.symbol)
-                logger.info(f"{payload.symbol}: Tradovate quote result: {quote}")
-                if quote and quote.get("mid"):
-                    entry_price = quote["mid"]
-                    logger.info(
-                        f"{payload.symbol}: using Tradovate quote mid {entry_price:.2f} "
-                        f"as entry price for {payload.sl_tp_type} SL/TP conversion"
-                        + (f" (overriding payload price {payload.price})" if payload.price else "")
-                    )
-                else:
-                    logger.warning(f"{payload.symbol}: Tradovate quote returned no mid price")
-            else:
-                logger.warning(f"{payload.symbol}: broker adapter is {type(broker_adapter)}, not TradovateBroker")
-        except Exception as e:
-            logger.warning(f"{payload.symbol}: could not fetch Tradovate quote: {e}")
+        elif payload.price:
+            # Stream not running (no open positions yet) — use payload price
+            entry_price = payload.price
+            logger.info(
+                f"{payload.symbol}: no Tradovate stream, using payload price {entry_price:.2f} "
+                f"for {payload.sl_tp_type} SL/TP conversion"
+            )
 
     if needs_conversion and entry_price is None:
         logger.warning(
@@ -349,6 +357,8 @@ async def process_webhook(
             f"TSL {payload.trailing_distance}→{levels.trailing_distance}"
         )
 
+
+    raw_payload_str = json.dumps(payload.model_dump(exclude={"secret"}, mode="json"))
     order = Order(
         tenant_id=tenant_id,
         broker=payload.broker,
@@ -379,14 +389,20 @@ async def process_webhook(
         algo_version=payload.algo_version,
         comment=payload.comment,
         status=OrderStatus.PENDING,
-        raw_payload=json.dumps(payload.model_dump(exclude={"secret"}, mode="json")),
+        raw_payload=raw_payload_str,
     )
     db.add(order)
+
     await db.flush()
+
     logger.info(f"Order created: {order}")
 
     # --- 6. Submit to broker ---
-    broker = await get_broker_for_tenant(payload.broker, payload.account, tenant_id, db)
+    if cached_broker_account:
+        broker = build_broker_from_account(cached_broker_account, payload.account)
+    else:
+        broker = await get_broker_for_tenant(payload.broker, payload.account, tenant_id, db)
+
     order.status = OrderStatus.SUBMITTED
 
     # FIFO: resolve a unique broker-side quantity before submission.
@@ -427,7 +443,7 @@ async def process_webhook(
             order.status = OrderStatus.OPEN
         elif result.filled_quantity > 0:
             order.status = OrderStatus.FILLED
-            await apply_fill_to_position(db, order, result.filled_quantity, result.avg_fill_price)
+            await apply_fill_to_position(db, order, result.filled_quantity, result.avg_fill_price, position=pos)
             # Create trail trigger for Oanda after confirmed fill
             if (
                 payload.broker == "oanda"
@@ -443,13 +459,19 @@ async def process_webhook(
             logger.info(f"Order {replaced_order.id} cancelled (replaced by {order.id})")
 
         # --- 7. Increment monthly order counter ---
-        await increment_order_count(db, tenant_id)
+        await increment_order_count(db, tenant_id, subscription=enforcer.subscription if enforcer else None)
     else:
         order.status = OrderStatus.REJECTED
         order.error_message = result.error_message
+        if result.broker_request:
+            order.broker_request = result.broker_request
+        if result.broker_response:
+            order.broker_response = result.broker_response
         logger.warning(f"Order {order.id} rejected: {result.error_message}")
 
+
     await db.commit()
+
     logger.info(f"Order finalized: {order}")
 
     # Push real-time event to all connected SSE clients

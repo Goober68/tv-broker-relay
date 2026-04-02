@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -6,12 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.db import get_db
+from app.models.db import get_db, AsyncSessionLocal
 from app.models.tenant import Tenant
 from app.models.webhook_delivery import WebhookDelivery
 from app.schemas.webhook import WebhookPayload, OrderResponse
 from app.services.order_processor import process_webhook
-from app.services.api_keys import verify_api_key
+from app.services.api_keys import verify_api_key, touch_api_key_last_used
 from app.services.plan_enforcer import PlanEnforcer, PlanLimitExceeded
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,11 @@ async def _resolve_tenant(
     tenant_id: uuid.UUID,
     payload_secret: str | None,
     db: AsyncSession,
-) -> Tenant:
+) -> tuple[Tenant, int | None]:
     """
     Authenticate the webhook request via the 'secret' field in the payload.
     Rejects if missing or invalid.
+    Returns (tenant, api_key_id) — api_key_id used for deferred last_used_at touch.
     """
     if not payload_secret:
         raise _403
@@ -44,11 +46,10 @@ async def _resolve_tenant(
         logger.warning(f"Invalid API key attempt for tenant {tenant_id}")
         raise _403
 
-    return tenant
+    return tenant, key.id
 
 
-async def _log_delivery(
-    db: AsyncSession,
+async def _background_log_delivery(
     *,
     tenant_id: uuid.UUID,
     source_ip: str | None,
@@ -61,24 +62,28 @@ async def _log_delivery(
     order_id: int | None = None,
     duration_ms: float | None = None,
     broker_latency_ms: float | None = None,
+    api_key_id: int | None = None,
 ) -> None:
-    """Write a WebhookDelivery row. Errors here must never propagate to the caller."""
+    """Write delivery log and touch api_key.last_used_at in a background task."""
     try:
-        delivery = WebhookDelivery(
-            tenant_id=tenant_id,
-            source_ip=source_ip,
-            user_agent=user_agent,
-            raw_payload=raw_payload,
-            http_status=http_status,
-            auth_passed=auth_passed,
-            outcome=outcome,
-            error_detail=error_detail,
-            order_id=order_id,
-            duration_ms=duration_ms,
-            broker_latency_ms=broker_latency_ms,
-        )
-        db.add(delivery)
-        await db.commit()
+        async with AsyncSessionLocal() as db:
+            delivery = WebhookDelivery(
+                tenant_id=tenant_id,
+                source_ip=source_ip,
+                user_agent=user_agent,
+                raw_payload=raw_payload,
+                http_status=http_status,
+                auth_passed=auth_passed,
+                outcome=outcome,
+                error_detail=error_detail,
+                order_id=order_id,
+                duration_ms=duration_ms,
+                broker_latency_ms=broker_latency_ms,
+            )
+            db.add(delivery)
+            if api_key_id is not None:
+                await touch_api_key_last_used(db, api_key_id)
+            await db.commit()
     except Exception:
         logger.exception("Failed to write webhook delivery log — ignoring")
 
@@ -110,6 +115,12 @@ async def receive_webhook(
     source_ip = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     raw_body = await request.body()
+    api_key_id: int | None = None
+
+    def _fire_bg_log(**kwargs):
+        """Schedule delivery log + api_key touch as a background task."""
+        kwargs.setdefault("api_key_id", api_key_id)
+        asyncio.create_task(_background_log_delivery(**kwargs))
 
     # Parse payload (may fail if body is malformed JSON or fails validation)
     payload: WebhookPayload | None = None
@@ -117,8 +128,8 @@ async def receive_webhook(
         payload = WebhookPayload.model_validate_json(raw_body)
     except Exception as exc:
         duration_ms = (time.monotonic() - t_start) * 1000
-        await _log_delivery(
-            db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+        _fire_bg_log(
+            tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
             raw_payload=_safe_payload_str(None, raw_body),
             http_status=422, auth_passed=False,
             outcome="validation_error", error_detail=str(exc),
@@ -128,15 +139,15 @@ async def receive_webhook(
 
     # Auth
     try:
-        tenant = await _resolve_tenant(
+        tenant, api_key_id = await _resolve_tenant(
             tenant_id,
             payload_secret=payload.secret if payload else None,
             db=db,
         )
     except HTTPException as exc:
         duration_ms = (time.monotonic() - t_start) * 1000
-        await _log_delivery(
-            db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+        _fire_bg_log(
+            tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
             raw_payload=_safe_payload_str(payload, raw_body),
             http_status=exc.status_code, auth_passed=False,
             outcome="auth_failed", error_detail=exc.detail,
@@ -151,8 +162,8 @@ async def receive_webhook(
         enforcer.check_order_type(payload.order_type.value)
     except PlanLimitExceeded as e:
         duration_ms = (time.monotonic() - t_start) * 1000
-        await _log_delivery(
-            db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+        _fire_bg_log(
+            tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
             raw_payload=_safe_payload_str(payload, raw_body),
             http_status=429, auth_passed=True,
             outcome="rate_limited", error_detail=str(e),
@@ -165,8 +176,8 @@ async def receive_webhook(
         order = await process_webhook(db, payload, tenant_id=tenant.id, enforcer=enforcer)
     except ValueError as e:
         duration_ms = (time.monotonic() - t_start) * 1000
-        await _log_delivery(
-            db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+        _fire_bg_log(
+            tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
             raw_payload=_safe_payload_str(payload, raw_body),
             http_status=422, auth_passed=True,
             outcome="validation_error", error_detail=str(e),
@@ -175,8 +186,8 @@ async def receive_webhook(
         raise HTTPException(status_code=422, detail=str(e))
     except PlanLimitExceeded as e:
         duration_ms = (time.monotonic() - t_start) * 1000
-        await _log_delivery(
-            db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+        _fire_bg_log(
+            tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
             raw_payload=_safe_payload_str(payload, raw_body),
             http_status=429, auth_passed=True,
             outcome="rate_limited", error_detail=str(e),
@@ -186,8 +197,8 @@ async def receive_webhook(
     except Exception as exc:
         duration_ms = (time.monotonic() - t_start) * 1000
         logger.exception(f"Unexpected error processing webhook for tenant {tenant_id}")
-        await _log_delivery(
-            db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+        _fire_bg_log(
+            tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
             raw_payload=_safe_payload_str(payload, raw_body),
             http_status=500, auth_passed=True,
             outcome="error", error_detail=str(exc),
@@ -197,8 +208,8 @@ async def receive_webhook(
 
     duration_ms = (time.monotonic() - t_start) * 1000
     broker_latency_ms = getattr(order, '_broker_latency_ms', None)
-    await _log_delivery(
-        db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
+    _fire_bg_log(
+        tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
         raw_payload=_safe_payload_str(payload, raw_body),
         http_status=200, auth_passed=True,
         outcome=order.status.value,

@@ -121,6 +121,13 @@ class OandaBroker(BrokerBase):
             body["order"]["timeInForce"] = tif
             if tif == TimeInForce.GTD and order.expire_at:
                 body["order"]["gtdTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+        elif order.order_type == OrderType.STOP_LIMIT:
+            body["order"]["type"] = "STOP"
+            body["order"]["price"] = _fmt_price(order.symbol, order.price)
+            body["order"]["priceBound"] = _fmt_price(order.symbol, order.price)
+            body["order"]["timeInForce"] = tif
+            if tif == TimeInForce.GTD and order.expire_at:
+                body["order"]["gtdTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
 
         # trailing_distance is intentionally NOT sent to Oanda at order time.
         # The stream manager places the native trailing stop only when the

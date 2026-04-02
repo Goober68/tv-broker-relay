@@ -145,9 +145,11 @@ async def assign_plan(
     return sub
 
 
-async def increment_order_count(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+async def increment_order_count(
+    db: AsyncSession, tenant_id: uuid.UUID, subscription: "Subscription | None" = None,
+) -> None:
     """Increment the monthly order counter. Called after a successful order submission."""
-    sub = await get_subscription(db, tenant_id)
+    sub = subscription or await get_subscription(db, tenant_id)
     if sub:
         sub.orders_this_period += 1
         await db.flush()

@@ -57,8 +57,9 @@ async def verify_api_key(
 ) -> ApiKey | None:
     """
     Verify a raw key belongs to the given tenant and is active.
-    Updates last_used_at on success.
     Returns the ApiKey record or None.
+    last_used_at is updated in the background by the caller to avoid
+    adding a round-trip to the hot path.
     """
     key_hash = _hash_key(raw_key)
     result = await db.execute(
@@ -68,17 +69,16 @@ async def verify_api_key(
             ApiKey.is_active == True,  # noqa: E712
         )
     )
-    key = result.scalar_one_or_none()
-    if key is None:
-        return None
+    return result.scalar_one_or_none()
 
-    # Touch last_used_at without loading the full object
+
+async def touch_api_key_last_used(db: AsyncSession, key_id: int) -> None:
+    """Update last_used_at timestamp. Called in background after response."""
     await db.execute(
         update(ApiKey)
-        .where(ApiKey.id == key.id)
+        .where(ApiKey.id == key_id)
         .values(last_used_at=datetime.now(timezone.utc))
     )
-    return key
 
 
 async def list_api_keys(db: AsyncSession, tenant_id: uuid.UUID) -> list[ApiKey]:

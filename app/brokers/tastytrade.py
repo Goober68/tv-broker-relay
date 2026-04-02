@@ -199,15 +199,16 @@ class TastytradeBroker(BrokerBase):
         body: dict = {
             "order-type":    "Market" if order.order_type == OrderType.MARKET
                              else "Limit" if order.order_type == OrderType.LIMIT
+                             else "Stop Limit" if order.order_type == OrderType.STOP_LIMIT
                              else "Stop",
             "time-in-force": _TIF_MAP.get(order.time_in_force, "Day"),
             "legs":          [leg],
         }
 
-        if order.order_type == OrderType.LIMIT and order.price:
+        if order.order_type in (OrderType.LIMIT, OrderType.STOP_LIMIT) and order.price:
             body["price"] = str(order.price)
 
-        if order.order_type == OrderType.STOP and order.price:
+        if order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT) and order.price:
             body["stop-trigger"] = str(order.price)
 
         if order.time_in_force == TimeInForce.GTD and order.expire_at:

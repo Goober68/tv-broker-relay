@@ -48,6 +48,7 @@ async def apply_fill_to_position(
     order: Order,
     filled_qty: float,
     fill_price: float | None,
+    position: Position | None = None,
 ) -> Position:
     """
     Update internal position state after a confirmed fill.
@@ -59,7 +60,7 @@ async def apply_fill_to_position(
     The multiplier converts price points into account currency.
     E.g. for ES: 1 point × 50 ($/pt) × N contracts = $N×50
     """
-    pos = await get_or_create_position(
+    pos = position or await get_or_create_position(
         db, order.tenant_id, order.broker, order.account, order.symbol
     )
     fill_price = fill_price or 0.0

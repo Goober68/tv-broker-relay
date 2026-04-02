@@ -32,9 +32,10 @@ from app.models.order import (
 logger = logging.getLogger(__name__)
 
 _ORDER_TYPE_MAP = {
-    OrderType.MARKET: "Market",
-    OrderType.LIMIT:  "Limit",
-    OrderType.STOP:   "StopMarket",
+    OrderType.MARKET:     "Market",
+    OrderType.LIMIT:      "Limit",
+    OrderType.STOP:       "StopMarket",
+    OrderType.STOP_LIMIT: "StopLimit",
 }
 
 _TIF_MAP = {
@@ -200,10 +201,10 @@ class TradeStationBroker(BrokerBase):
             "TimeInForce": {"Duration": _TIF_MAP.get(order.time_in_force, "DAY")},
         }
 
-        if order.order_type == OrderType.LIMIT and order.price:
+        if order.order_type in (OrderType.LIMIT, OrderType.STOP_LIMIT) and order.price:
             body["LimitPrice"] = str(order.price)
 
-        if order.order_type == OrderType.STOP and order.price:
+        if order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT) and order.price:
             body["StopPrice"] = str(order.price)
 
         if order.time_in_force == TimeInForce.GTD and order.expire_at:

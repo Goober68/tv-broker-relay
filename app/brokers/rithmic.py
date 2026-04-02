@@ -36,9 +36,10 @@ logger = logging.getLogger(__name__)
 
 # Rithmic order type mapping  # VERIFY against your API docs
 _ORDER_TYPE_MAP = {
-    OrderType.MARKET: "MKT",
-    OrderType.LIMIT:  "LMT",
-    OrderType.STOP:   "STP",
+    OrderType.MARKET:     "MKT",
+    OrderType.LIMIT:      "LMT",
+    OrderType.STOP:       "STP",
+    OrderType.STOP_LIMIT: "STPLMT",
 }
 
 # Rithmic time-in-force mapping  # VERIFY
@@ -246,7 +247,7 @@ class RithmicBroker(BrokerBase):
             "accountId":   order.account,             # VERIFY field name
         }
 
-        if order.price and order.order_type in (OrderType.LIMIT, OrderType.STOP):
+        if order.price and order.order_type in (OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT):
             body["price"] = order.price  # VERIFY field name (may be "limitPrice"/"stopPrice")
 
         if order.stop_loss is not None:

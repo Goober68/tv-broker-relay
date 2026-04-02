@@ -80,6 +80,33 @@ async def get_broker_for_tenant(
             raise ValueError(f"Unknown broker: {broker_name!r}")
 
 
+def build_broker_from_account(broker_account: BrokerAccount, account_alias: str) -> BrokerBase:
+    """Build a broker adapter from an already-loaded BrokerAccount (no DB query)."""
+    try:
+        creds = decrypt_credentials(broker_account.credentials_encrypted)
+    except Exception as e:
+        logger.error(f"Failed to decrypt credentials for BrokerAccount {broker_account.id}: {e}")
+        raise ValueError("Broker credentials could not be decrypted") from e
+
+    if broker_account.instrument_map:
+        creds["instrument_map"] = broker_account.instrument_map
+    creds["fifo_randomize"]  = broker_account.fifo_randomize
+    creds["fifo_max_offset"] = broker_account.fifo_max_offset
+    creds["account_alias"]   = account_alias
+    creds["_broker_account_id"] = broker_account.id
+
+    match broker_account.broker:
+        case "oanda":      return OandaBroker.from_credentials(creds)
+        case "ibkr":       return IBKRBroker.from_credentials(creds)
+        case "tradovate":  return TradovateBroker.from_credentials(creds)
+        case "etrade":     return EtradeBroker.from_credentials(creds)
+        case "rithmic":    return RithmicBroker.from_credentials(creds)
+        case "tradestation": return TradeStationBroker.from_credentials(creds)
+        case "alpaca":     return AlpacaBroker.from_credentials(creds)
+        case "tastytrade": return TastytradeBroker.from_credentials(creds)
+        case _:            raise ValueError(f"Unknown broker: {broker_account.broker!r}")
+
+
 def get_broker(name: str) -> BrokerBase:
     """Legacy single-tenant helper — loads from environment settings."""
     match name:

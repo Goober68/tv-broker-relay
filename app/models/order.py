@@ -26,9 +26,10 @@ class OrderAction(str, enum.Enum):
 
 
 class OrderType(str, enum.Enum):
-    MARKET = "market"
-    LIMIT  = "limit"
-    STOP   = "stop"
+    MARKET     = "market"
+    LIMIT      = "limit"
+    STOP       = "stop"
+    STOP_LIMIT = "stop_limit"
 
 
 class TimeInForce(str, enum.Enum):

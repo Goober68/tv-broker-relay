@@ -139,14 +139,15 @@ class AlpacaBroker(BrokerBase):
             "side":          "buy" if is_buy else "sell",
             "type":          "market" if order.order_type == OrderType.MARKET
                              else "limit" if order.order_type == OrderType.LIMIT
+                             else "stop_limit" if order.order_type == OrderType.STOP_LIMIT
                              else "stop",
             "time_in_force": _TIF_MAP.get(order.time_in_force, "day"),
         }
 
-        if order.order_type == OrderType.LIMIT and order.price:
+        if order.order_type in (OrderType.LIMIT, OrderType.STOP_LIMIT) and order.price:
             body["limit_price"] = str(order.price)
 
-        if order.order_type == OrderType.STOP and order.price:
+        if order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT) and order.price:
             body["stop_price"] = str(order.price)
 
         if order.time_in_force == TimeInForce.GTD and order.expire_at:

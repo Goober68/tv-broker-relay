@@ -58,15 +58,23 @@ class PlanEnforcer:
     @classmethod
     async def load(cls, tenant_id: uuid.UUID, db: AsyncSession) -> "PlanEnforcer":
         """Load the tenant's current subscription and plan. Creates Free sub if none exists."""
-        sub = await get_or_create_subscription(db, tenant_id)
-        # Eagerly load the plan
         from sqlalchemy.orm import selectinload
+        # Single query: subscription + plan in one round-trip
         result = await db.execute(
             select(Subscription)
-            .where(Subscription.id == sub.id)
+            .where(Subscription.tenant_id == tenant_id)
             .options(selectinload(Subscription.plan))
         )
-        sub = result.scalar_one()
+        sub = result.scalar_one_or_none()
+        if sub is None:
+            # Cold path — new tenant, create free subscription
+            sub = await get_or_create_subscription(db, tenant_id)
+            result = await db.execute(
+                select(Subscription)
+                .where(Subscription.id == sub.id)
+                .options(selectinload(Subscription.plan))
+            )
+            sub = result.scalar_one()
         return cls(sub.plan, sub, tenant_id)
 
     # ── Order type ─────────────────────────────────────────────────────────────

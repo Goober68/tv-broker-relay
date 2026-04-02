@@ -1,6 +1,6 @@
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Literal
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from app.models.order import (
     OrderAction, OrderType, TimeInForce, InstrumentType,
     BROKER_INSTRUMENT_SUPPORT,
@@ -37,15 +37,20 @@ class WebhookPayload(BaseModel):
           - ISO 8601 string:  "2025-06-01T14:30:00Z"
           - Unix ms integer:  1748785800000  (from TradingView {{timenow + 900000}})
           - Unix s integer:   1748785800
+          - TTL in seconds:   300  (5 minutes from now)
+        Heuristic: values < 1e9 are TTL, >= 1e9 are Unix timestamps.
         """
         if v is None:
             return None
         if isinstance(v, (int, float)):
             ts = float(v)
-            # Heuristic: values > 1e10 are milliseconds
             if ts > 1_000_000_000_000:
+                # Unix milliseconds
                 ts = ts / 1000
-            from datetime import timezone
+            elif ts < 1_000_000_000:
+                # TTL — seconds from now
+                return datetime.now(timezone.utc) + timedelta(seconds=ts)
+            # Unix seconds
             return datetime.fromtimestamp(ts, tz=timezone.utc)
         return v  # Let pydantic handle ISO string parsing
 
@@ -81,6 +86,31 @@ class WebhookPayload(BaseModel):
     #   "pipettes"  — number of pipettes from entry (forex, 1/10th pip, e.g. 500 pipettes = 50 pips)
     #   "points"    — raw price points from entry (any instrument, e.g. 2.50)
     sl_tp_type: Literal["absolute", "ticks", "pips", "pipettes", "points"] | None = None
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def normalize_action(cls, v):
+        if isinstance(v, str):
+            v = v.strip().lower()
+            aliases = {"long": "buy", "short": "sell"}
+            v = aliases.get(v, v)
+        return v
+
+    @field_validator("instrument_type", mode="before")
+    @classmethod
+    def normalize_instrument_type(cls, v):
+        if isinstance(v, str):
+            v = v.strip().lower()
+        return v
+
+    @field_validator("order_type", mode="before")
+    @classmethod
+    def normalize_order_type(cls, v):
+        if isinstance(v, str):
+            v = v.strip().lower()
+            aliases = {"lmt": "limit", "mkt": "market", "stp": "stop", "stpmkt": "stop", "stplmt": "stop_limit"}
+            v = aliases.get(v, v)
+        return v
 
     @field_validator("symbol")
     @classmethod
@@ -154,7 +184,7 @@ class WebhookPayload(BaseModel):
 
     @model_validator(mode="after")
     def price_required_for_limit_stop(self) -> "WebhookPayload":
-        if self.order_type in (OrderType.LIMIT, OrderType.STOP) and self.price is None:
+        if self.order_type in (OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT) and self.price is None:
             raise ValueError("price is required for limit and stop orders")
         return self
 

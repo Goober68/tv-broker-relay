@@ -33,9 +33,10 @@ _TIF_MAP = {
 }
 
 _ORDER_TYPE_MAP = {
-    OrderType.MARKET: "MKT",
-    OrderType.LIMIT:  "LMT",
-    OrderType.STOP:   "STP",
+    OrderType.MARKET:     "MKT",
+    OrderType.LIMIT:      "LMT",
+    OrderType.STOP:       "STP",
+    OrderType.STOP_LIMIT: "STP LMT",
 }
 
 
@@ -132,8 +133,10 @@ class IBKRBroker(BrokerBase):
         else:
             body["conid"] = conid
 
-        if order.price and order.order_type in (OrderType.LIMIT, OrderType.STOP):
+        if order.price and order.order_type in (OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT):
             body["price"] = order.price
+        if order.order_type == OrderType.STOP_LIMIT and order.price:
+            body["auxPrice"] = order.price
 
         if order.stop_loss is not None:
             body["auxPrice"] = order.stop_loss

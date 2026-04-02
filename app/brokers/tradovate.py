@@ -254,9 +254,10 @@ class TradovateBroker(BrokerBase):
 
         action_map = {OrderAction.BUY: "Buy", OrderAction.SELL: "Sell"}
         order_type_map = {
-            OrderType.MARKET: "Market",
-            OrderType.LIMIT:  "Limit",
-            OrderType.STOP:   "Stop",
+            OrderType.MARKET:     "Market",
+            OrderType.LIMIT:      "Limit",
+            OrderType.STOP:       "Stop",
+            OrderType.STOP_LIMIT: "StopLimit",
         }
         tif = _TIF_MAP.get(order.time_in_force, "Day")
 
@@ -285,58 +286,32 @@ class TradovateBroker(BrokerBase):
 
         import json as _json
         if has_trail:
-            # Trailing stop — use /orderStrategy/startOrderStrategy with params JSON
-            # IMPORTANT: startOrderStrategy bracket values are RELATIVE offsets from
-            # entry price, not absolute prices. The offset converter has already
-            # converted trail_dist/trail_trigger/trail_update to price differences.
-            # take_profit and stop_loss must also be relative here — subtract entry price.
-            # startOrderStrategy bracket values are signed relative offsets:
-            # positive = profit direction, negative = loss direction
-            # For a buy: TP is positive (+25), SL/trail is negative (-25)
-            # For a sell: TP is negative (-25), SL/trail is positive (+25)
+            # Trailing stop — use /orderStrategy/startOrderStrategy
+            # Bracket values are RELATIVE offsets from entry price.
+            # Signed by direction: positive = profit, negative = loss.
             is_buy = order.action == OrderAction.BUY
             sign   =  1 if is_buy else -1  # profit direction
             loss   = -1 if is_buy else  1  # loss direction
 
-            trail_dist = order.trail_dist * loss  # negative for buy, positive for sell
-
             bracket: dict = {
                 "qty":          int(order.quantity),
                 "trailingStop": True,
-                "stopLoss":     trail_dist,
+                "stopLoss":     abs(order.trail_dist) * loss,
             }
             if order.take_profit is not None:
-                # startOrderStrategy bracket values are RELATIVE offsets from entry.
-                # order.take_profit is already an absolute price (post offset_converter).
-                # We must subtract the entry price to get the relative offset.
-                # Sign: positive for buy (above entry), negative for sell (below entry)
                 ref_price = order.price or order.avg_fill_price
                 if ref_price:
                     bracket["profitTarget"] = abs(order.take_profit - ref_price) * sign
                 else:
-                    # Market order with no reference price — log warning.
-                    # take_profit is absolute; best we can do is use it as-is and
-                    # hope the caller provided a sensible value.
-                    logger.warning(
-                        f"{order.symbol}: no reference price for market order — "
-                        f"cannot compute relative profitTarget from absolute {order.take_profit}"
-                    )
                     bracket["profitTarget"] = order.take_profit
             if order.stop_loss is not None:
                 ref_price = order.price or order.avg_fill_price
                 if ref_price:
                     bracket["stopLoss"] = abs(order.stop_loss - ref_price) * loss
                 else:
-                    logger.warning(
-                        f"{order.symbol}: no reference price for market order — "
-                        f"cannot compute relative stopLoss from absolute {order.stop_loss}"
-                    )
                     bracket["stopLoss"] = order.stop_loss * loss
-            # autoTrail values are in price distance (absolute value, direction-agnostic):
-            #   stopLoss: trailing distance in points (e.g. 2.0 = $2 trail)
-            #   trigger:  points of profit before trail activates (e.g. 6.25 = $6.25 profit)
-            #   freq:     minimum price move before trail updates (e.g. 0.25)
-            # The offset_converter already converted ticks→points for trail_dist/trail_update.
+
+            # autoTrail: trailing distance, trigger, and step size (all in points)
             auto_trail: dict = {"stopLoss": abs(order.trail_dist)}
             if order.trail_trigger is not None:
                 ref_price = order.price or order.avg_fill_price
@@ -348,13 +323,17 @@ class TradovateBroker(BrokerBase):
                 auto_trail["freq"] = order.trail_update
             bracket["autoTrail"] = auto_trail
 
+            # Strategy orders don't support native GTD — use GTC and let
+            # the gtd_expiry background task enforce the expiry.
+            strategy_tif = "GTC" if order.time_in_force == TimeInForce.GTD else tif
             entry_version: dict = {
                 "orderQty":    int(order.quantity),
                 "orderType":   order_type_map[order.order_type],
-                "timeInForce": tif,
+                "timeInForce": strategy_tif,
             }
             if order.price and order.order_type != OrderType.MARKET:
                 entry_version["price"] = order.price
+
             params_str = _json.dumps({
                 "entryVersion": entry_version,
                 "brackets": [bracket],
@@ -400,10 +379,11 @@ class TradovateBroker(BrokerBase):
                 resp = await client.post(f"{self.base_url}{endpoint}", json=body)
                 resp.raise_for_status()
                 data = resp.json()
-                if data.get("failureReason"):
+                error_msg = data.get("failureReason") or data.get("errorText")
+                if error_msg:
                     return BrokerOrderResult(
                         success=False,
-                        error_message=data["failureReason"],
+                        error_message=error_msg,
                         broker_request=body_str,
                         broker_response=_json.dumps(data, default=str),
                     )
@@ -660,6 +640,13 @@ class TradovateBroker(BrokerBase):
                     f"{self.base_url}/order/cancelorder",
                     json={"orderId": int(broker_order_id)},
                 )
-                return resp.status_code == 200
+                if resp.status_code == 200:
+                    return True
+                # May be a strategy order — try interruptOrderStrategy
+                resp2 = await client.post(
+                    f"{self.base_url}/orderStrategy/interruptOrderStrategy",
+                    json={"orderStrategyId": int(broker_order_id)},
+                )
+                return resp2.status_code == 200
             except Exception:
                 return False
