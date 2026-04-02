@@ -12,10 +12,8 @@ Runs as two background tasks:
 import asyncio
 import json
 import logging
-import re
 from collections import deque
 from datetime import datetime, timezone, timedelta, date
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,50 +23,19 @@ from app.models.order import Order, DEFAULT_FUTURES_MULTIPLIERS
 from app.models.broker_account import BrokerAccount
 from app.models.position import Position
 from app.config import get_settings
+from app.services.utils import futures_root, trading_day, build_commission_lookup, get_commission
 
 logger = logging.getLogger(__name__)
 
-ET = ZoneInfo("America/New_York")
-_FUTURES_CONTRACT_RE = re.compile(r'^(.+?)[FGHJKMNQUVXZ]\d{1,2}$')
 
-
-def _futures_root(contract: str) -> str:
-    m = _FUTURES_CONTRACT_RE.match(contract)
-    return m.group(1) if m else ''.join(c for c in contract if c.isalpha())
-
-
-def _trading_day(ts: datetime) -> date:
-    """Futures trading day rolls at 5pm ET."""
-    ts_et = ts.astimezone(ET)
-    if ts_et.hour >= 17:
-        return (ts_et + timedelta(days=1)).date()
-    return ts_et.date()
-
-
-def _build_commission_lookup(broker_account: BrokerAccount) -> tuple[dict, float]:
-    """Build commission lookup from instrument_map, return (lookup_dict, default_commission)."""
-    default_commission = broker_account.commission_per_contract or 0.0
-    instrument_map = broker_account.instrument_map or {}
-    lookup = {}
-    for key, val in instrument_map.items():
-        if isinstance(val, dict) and "commission" in val:
-            comm = float(val["commission"])
-            lookup[key] = comm
-            ts = val.get("target_symbol", "")
-            if ts:
-                lookup[ts] = comm
-                lookup[_futures_root(ts)] = comm
-            lookup[_futures_root(key)] = comm
-    return lookup, default_commission
-
-
-def _get_commission(symbol: str, lookup: dict, default: float) -> float:
-    if symbol in lookup:
-        return lookup[symbol]
-    root = _futures_root(symbol)
-    if root in lookup:
-        return lookup[root]
-    return default
+def _build_account_commission(broker_account: BrokerAccount) -> tuple[dict, float]:
+    """Build commission lookup for a broker account."""
+    return build_commission_lookup(
+        broker_account.instrument_map,
+        broker_account.commission_per_contract or 0.0,
+        broker=broker_account.broker,
+        account_type=broker_account.account_type,
+    )
 
 
 def _serialize_lots(open_lots: dict[str, deque]) -> dict:
@@ -100,7 +67,7 @@ async def process_new_fills(db: AsyncSession, state_row, broker_account: BrokerA
     Process fills with id > last_processed_order_id through FIFO matching.
     Updates state_row and daily_pnl table. Returns number of realized events.
     """
-    comm_lookup, default_comm = _build_commission_lookup(broker_account)
+    comm_lookup, default_comm = _build_account_commission(broker_account)
     open_lots = _deserialize_lots(state_row.open_lots)
 
     # Fetch new fills
@@ -131,7 +98,7 @@ async def process_new_fills(db: AsyncSession, state_row, broker_account: BrokerA
         return 0
 
     realized_count = 0
-    current_trading_day = _trading_day(datetime.now(timezone.utc))
+    current_trading_day = trading_day(datetime.now(timezone.utc))
 
     # Check for trading day rollover
     if state_row.daily_pnl_trading_day and state_row.daily_pnl_trading_day != current_trading_day:
@@ -181,8 +148,8 @@ async def process_new_fills(db: AsyncSession, state_row, broker_account: BrokerA
                         pnl = pnl / price
 
                 # Commission
-                entry_comm = lot_comm if lot_comm is not None else _get_commission(sym, comm_lookup, default_comm)
-                exit_comm = fill_comm if fill_comm is not None else _get_commission(sym, comm_lookup, default_comm)
+                entry_comm = lot_comm if lot_comm is not None else get_commission(sym, comm_lookup, default_comm)
+                exit_comm = fill_comm if fill_comm is not None else get_commission(sym, comm_lookup, default_comm)
                 total_comm = (entry_comm + exit_comm) * match_qty
                 if total_comm > 0:
                     pnl -= total_comm
@@ -193,7 +160,7 @@ async def process_new_fills(db: AsyncSession, state_row, broker_account: BrokerA
                     state_row.hwm_cumulative = state_row.cumulative_realized
 
                 # Daily P&L
-                fill_trading_day = _trading_day(ts)
+                fill_trading_day = trading_day(ts)
                 if state_row.daily_pnl_trading_day is None or fill_trading_day != state_row.daily_pnl_trading_day:
                     state_row.daily_realized = pnl
                     state_row.hwm_daily = max(0.0, pnl)
@@ -249,7 +216,7 @@ async def full_recalculate(db: AsyncSession, broker_account: BrokerAccount) -> d
     Walk ALL fills from scratch and rebuild state + daily_pnl.
     Returns {cumulative_realized, hwm_cumulative, daily_totals, drift}.
     """
-    comm_lookup, default_comm = _build_commission_lookup(broker_account)
+    comm_lookup, default_comm = _build_account_commission(broker_account)
 
     result = await db.execute(
         text("""
@@ -316,8 +283,8 @@ async def full_recalculate(db: AsyncSession, broker_account: BrokerAccount) -> d
                     if price > 0:
                         pnl = pnl / price
 
-                entry_comm = lot_comm if lot_comm is not None else _get_commission(sym, comm_lookup, default_comm)
-                exit_comm = fill_comm if fill_comm is not None else _get_commission(sym, comm_lookup, default_comm)
+                entry_comm = lot_comm if lot_comm is not None else get_commission(sym, comm_lookup, default_comm)
+                exit_comm = fill_comm if fill_comm is not None else get_commission(sym, comm_lookup, default_comm)
                 total_comm = (entry_comm + exit_comm) * match_qty
                 if total_comm > 0:
                     pnl -= total_comm
@@ -326,7 +293,7 @@ async def full_recalculate(db: AsyncSession, broker_account: BrokerAccount) -> d
                 if cumulative > hwm:
                     hwm = cumulative
 
-                td = _trading_day(fill.created_at)
+                td = trading_day(fill.created_at)
                 existing = daily_totals.get(td, (0.0, 0, 0.0))
                 daily_totals[td] = (existing[0] + pnl, existing[1] + 1, existing[2] + total_comm)
 
@@ -448,7 +415,7 @@ async def _pnl_engine_once():
                         )
 
                 # Handle trading day rollover (no new fills but day changed)
-                current_td = _trading_day(datetime.now(timezone.utc))
+                current_td = trading_day(datetime.now(timezone.utc))
                 if state.daily_pnl_trading_day and state.daily_pnl_trading_day != current_td:
                     await db.execute(
                         text("""
@@ -502,7 +469,7 @@ async def _pnl_reconcile_once():
                     )
 
                     # Determine current trading day's P&L from daily_totals
-                    current_td = _trading_day(datetime.now(timezone.utc))
+                    current_td = trading_day(datetime.now(timezone.utc))
                     daily_data = recalc["daily_totals"].get(current_td, (0.0, 0, 0.0))
 
                     # Rebuild daily_pnl table for this account

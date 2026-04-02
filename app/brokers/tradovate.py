@@ -486,25 +486,44 @@ class TradovateBroker(BrokerBase):
         token = await self._ensure_authenticated()
         async with httpx.AsyncClient(headers=self._headers(token), timeout=10.0) as client:
             try:
-                # cashBalance/list returns balances for all accounts under this login
-                resp = await client.get(f"{self.base_url}/cashBalance/list")
+                # Resolve account alias to numeric ID via fresh account list
+                acct_id = self._account_id_map.get(account)
+                acct_list_raw = None
+                if not acct_id:
+                    acct_resp = await client.get(
+                        f"{self.base_url}/account/list",
+                        headers=self._headers(token),
+                    )
+                    if acct_resp.status_code == 200:
+                        acct_list_raw = acct_resp.json()
+                        for a in acct_list_raw:
+                            # Index by name, nickname, and id for flexible matching
+                            self._account_id_map[a["name"]] = a["id"]
+                            if a.get("nickname"):
+                                self._account_id_map[a["nickname"]] = a["id"]
+                        acct_id = self._account_id_map.get(account)
+
+                # If no exact match but only one account under this login,
+                # use it — prop firm accounts (Apex etc.) route through a
+                # single Tradovate account with a different name.
+                if not acct_id and acct_list_raw and len(acct_list_raw) == 1:
+                    acct_id = acct_list_raw[0]["id"]
+                    self._account_id_map[account] = acct_id
+
+                if not acct_id:
+                    return None
+
+                # cashBalance/list returns balances for all accounts — match by accountId
+                resp = await client.get(
+                    f"{self.base_url}/cashBalance/list",
+                    headers=self._headers(token),
+                )
                 if resp.status_code != 200:
                     return None
 
-                balances = resp.json()
-                if not balances:
-                    return None
-
-                # Match by accountId — need to resolve account name to numeric ID first
-                acct_id = self._account_id_map.get(account) or self._account_id
-                if acct_id:
-                    for cb in balances:
-                        if cb.get("accountId") == acct_id:
-                            return float(cb.get("amount", 0))
-
-                # Fallback: if only one balance, return it
-                if len(balances) == 1:
-                    return float(balances[0].get("amount", 0))
+                for cb in resp.json():
+                    if cb.get("accountId") == acct_id:
+                        return float(cb.get("amount", 0))
 
                 return None
             except Exception:

@@ -5,20 +5,8 @@ from sqlalchemy import select, func
 from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Literal
-import re
 
-# Futures month codes: F=Jan, G=Feb, H=Mar, J=Apr, K=May, M=Jun,
-# N=Jul, Q=Aug, U=Sep, V=Oct, X=Nov, Z=Dec
-_FUTURES_CONTRACT_RE = re.compile(r'^(.+?)[FGHJKMNQUVXZ]\d{1,2}$')
-
-def _futures_root(contract: str) -> str:
-    """Extract product root from futures contract symbol.
-    MNQM6 -> MNQ, ESH5 -> ES, NQM6 -> NQ."""
-    m = _FUTURES_CONTRACT_RE.match(contract)
-    if m:
-        return m.group(1)
-    return ''.join(c for c in contract if c.isalpha())
-
+from app.services.utils import futures_root
 from app.models.db import get_db
 from app.models.tenant import Tenant
 from app.config import get_settings
@@ -93,7 +81,6 @@ class BrokerAccountOut(BaseModel):
     max_total_drawdown: float | None = None
     max_daily_drawdown: float | None = None
     drawdown_floor: float | None = None
-    commission_per_contract: float | None = None
     account_type: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -124,7 +111,6 @@ def _to_out(account) -> BrokerAccountOut:
         max_total_drawdown=account.max_total_drawdown,
         max_daily_drawdown=account.max_daily_drawdown,
         drawdown_floor=account.drawdown_floor,
-        commission_per_contract=account.commission_per_contract,
         account_type=account.account_type,
         created_at=account.created_at,
         updated_at=account.updated_at,
@@ -303,7 +289,7 @@ async def import_trade_history(
 
         contract = order_data.get("contractName") or order_data.get("symbol") or ""
         # Extract product root (strip month/year suffix)
-        root = _futures_root(contract)
+        root = futures_root(contract)
         multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
 
         price = float(fill.get("price", 0))
@@ -560,7 +546,7 @@ def _parse_fill_row(row: dict, account_alias: str) -> dict | None:
         return None
 
     # Multiplier
-    root = _futures_root(product or contract)
+    root = futures_root(product or contract)
     multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
 
     # Commission per contract from the CSV
@@ -623,7 +609,7 @@ def _parse_order_row(row: dict, account_alias: str) -> dict | None:
     if fill_time is None:
         return None
 
-    root = _futures_root(product or contract)
+    root = futures_root(product or contract)
     multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
 
     ot = "market" if "market" in order_type_str else "limit" if "limit" in order_type_str else "stop"
@@ -748,7 +734,7 @@ async def sync_trade_history(
             continue
 
         contract = order_data.get("contractName") or fill.get("contractName", "")
-        root = _futures_root(contract)
+        root = futures_root(contract)
         multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
 
         price = float(fill.get("price", 0))
@@ -1086,6 +1072,7 @@ async def bulk_create_tradovate_accounts(
                 display_name=display_name,
                 auto_close_enabled=is_prop,
                 auto_close_time="16:50" if is_prop else None,
+                account_type=acct.get("account_type"),
             )
             created.append(account)
         except ValueError:
@@ -1379,7 +1366,6 @@ class DrawdownUpdate(BaseModel):
     max_total_drawdown: float | None = None
     max_daily_drawdown: float | None = None
     drawdown_floor: float | None = None
-    commission_per_contract: float | None = None
 
 
 @router.patch("/{account_id}/drawdown-limits", status_code=200)
@@ -1401,7 +1387,6 @@ async def update_drawdown_limits(
     account.max_total_drawdown = body.max_total_drawdown
     account.max_daily_drawdown = body.max_daily_drawdown
     account.drawdown_floor = body.drawdown_floor
-    account.commission_per_contract = body.commission_per_contract
     await db.commit()
     return {
         "id": account.id,

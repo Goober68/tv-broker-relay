@@ -60,6 +60,7 @@ async def _log_delivery(
     error_detail: str | None = None,
     order_id: int | None = None,
     duration_ms: float | None = None,
+    broker_latency_ms: float | None = None,
 ) -> None:
     """Write a WebhookDelivery row. Errors here must never propagate to the caller."""
     try:
@@ -74,6 +75,7 @@ async def _log_delivery(
             error_detail=error_detail,
             order_id=order_id,
             duration_ms=duration_ms,
+            broker_latency_ms=broker_latency_ms,
         )
         db.add(delivery)
         await db.commit()
@@ -194,6 +196,7 @@ async def receive_webhook(
         raise HTTPException(status_code=500, detail="Internal error processing order")
 
     duration_ms = (time.monotonic() - t_start) * 1000
+    broker_latency_ms = getattr(order, '_broker_latency_ms', None)
     await _log_delivery(
         db, tenant_id=tenant_id, source_ip=source_ip, user_agent=user_agent,
         raw_payload=_safe_payload_str(payload, raw_body),
@@ -202,6 +205,7 @@ async def receive_webhook(
         error_detail=order.error_message if order.status.value in ("rejected", "error") else None,
         order_id=order.id,
         duration_ms=duration_ms,
+        broker_latency_ms=broker_latency_ms,
     )
 
     return OrderResponse(

@@ -23,6 +23,107 @@ TradingView Alert
   PostgreSQL
 ```
 
+## Database Schema
+
+```
+┌─────────────────────────┐
+│        tenants          │
+├─────────────────────────┤
+│ id (UUID) PK            │
+│ email                   │
+│ password_hash           │
+│ is_active, is_admin     │
+│ email_verified          │
+│ created_at, updated_at  │
+└──────────┬──────────────┘
+           │ tenant_id (FK)
+     ┌─────┼──────────┬──────────────┬───────────────┬──────────────┬──────────────┐
+     │     │          │              │               │              │              │
+     ▼     ▼          ▼              ▼               ▼              ▼              ▼
+┌─────────┐ ┌────────────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────┐ ┌──────────────────┐
+│api_keys │ │broker_accounts │ │  orders  │ │  positions   │ │daily_pnl │ │webhook_deliveries│
+├─────────┤ ├────────────────┤ ├──────────┤ ├──────────────┤ ├──────────┤ ├──────────────────┤
+│ id PK   │ │ id PK          │ │ id PK    │ │ id PK        │ │ id PK    │ │ id PK            │
+│ name    │ │ broker         │ │ broker   │ │ broker       │ │ broker   │ │ source_ip        │
+│ key_hash│ │ account_alias  │ │ account  │ │ account      │ │ account  │ │ raw_payload      │
+│key_prefix│ │ display_name  │ │ symbol   │ │ symbol       │ │trading_day│ │ http_status      │
+│is_active│ │ credentials_   │ │ action   │ │ quantity     │ │realized_ │ │ auth_passed      │
+│last_used│ │  encrypted     │ │order_type│ │ avg_price    │ │  pnl     │ │ outcome          │
+│         │ │ instrument_map │ │ quantity │ │ multiplier   │ │trade_    │ │ error_detail     │
+│         │ │ account_type   │ │ price    │ │ realized_pnl │ │  count   │ │ duration_ms      │
+│         │ │ is_active      │ │ status   │ │ daily_       │ │commission│ │ broker_latency_ms│
+│         │ │ fifo_randomize │ │filled_qty│ │  realized_pnl│ │  _total  │ │ order_id (FK)────┤
+│         │ │ auto_close_*   │ │avg_fill_ │ │ unrealized_  │ └──────────┘ └──────────────────┘
+│         │ │ max_total_     │ │  price   │ │  pnl         │
+│         │ │  drawdown      │ │ broker_  │ │ last_price   │
+│         │ │ max_daily_     │ │  order_id│ └──────────────┘
+│         │ │  drawdown      │ │ broker_  │
+│         │ │ drawdown_floor │ │  request │
+│         │ │ commission_    │ │ broker_  │
+│         │ │  per_contract  │ │  response│
+│         │ │                │ │ algo_id  │
+│         │ │                │ │commission│
+└─────────┘ └───────┬────────┘ └────┬─────┘
+                    │               │
+                    │               │ order_id (FK)
+                    │ broker_       │
+                    │ account_id    ▼
+                    │ (FK)    ┌───────────────┐
+                    │         │trail_triggers  │
+                    └────────►├───────────────┤
+                              │ id PK         │
+                              │ symbol        │
+                              │ direction     │
+                              │ trigger_price │
+                              │ trail_distance│
+                              │ trade_id      │
+                              │ status        │
+                              │ fired_at      │
+                              └───────────────┘
+
+  ┌──────────────────┐     ┌───────────────┐     ┌────────────────────┐
+  │ account_pnl_state│     │    plans      │     │  refresh_tokens    │
+  ├──────────────────┤     ├───────────────┤     ├────────────────────┤
+  │ id PK            │     │ id PK         │     │ id PK              │
+  │ tenant_id (FK)   │     │ name          │     │ tenant_id (FK)     │
+  │ broker, account  │     │ display_name  │     │ token_hash         │
+  │ cumulative_      │     │stripe_price_id│     │ expires_at         │
+  │  realized        │     │ max_broker_   │     │ revoked            │
+  │ daily_realized   │     │  accounts     │     │ user_agent         │
+  │ hwm_cumulative   │     │ max_monthly_  │     │ ip_address         │
+  │ hwm_daily        │     │  orders       │     └────────────────────┘
+  │ open_lots (JSON) │     │ max_open_     │
+  │ last_processed_  │     │  orders       │
+  │  order_id        │     │ max_position_ │
+  └──────────────────┘     │  size         │
+                           │ max_daily_loss│
+                     ┌─────┤ is_active     │
+                     │     └───────────────┘
+                     │ plan_id (FK)
+                     ▼
+              ┌───────────────┐
+              │ subscriptions │
+              ├───────────────┤
+              │ id PK         │
+              │ tenant_id (FK)│
+              │ stripe_*_id   │
+              │ status        │
+              │ current_period│
+              │ orders_this_  │
+              │  period       │
+              └───────────────┘
+```
+
+### Key relationships
+- **tenants** → owns all other entities via `tenant_id` FK
+- **broker_accounts** → encrypted credentials, instrument config, drawdown limits
+- **orders** → full lifecycle from webhook receipt to broker fill
+- **positions** → running P&L state per symbol per account
+- **trail_triggers** → Oanda streaming trail stops, linked to broker_account + order
+- **webhook_deliveries** → audit log of every inbound webhook, optionally linked to order
+- **account_pnl_state** → incremental FIFO P&L engine state (open lots, HWM, daily buckets)
+- **subscriptions** → Stripe billing, links tenant to plan
+
 ## Deployment
 
 ### Prerequisites

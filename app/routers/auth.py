@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Cookie
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
@@ -185,7 +185,7 @@ async def logout(
     """Revoke the current session's refresh token."""
     if refresh_token:
         await revoke_refresh_token(db, refresh_token)
-    response = JSONResponse(content=None, status_code=204)
+    response = Response(status_code=204)
     _clear_refresh_cookie(response)
     return response
 
@@ -197,7 +197,7 @@ async def logout_all(
 ):
     """Revoke all refresh tokens for this tenant (logout from all devices)."""
     await revoke_all_refresh_tokens(db, tenant.id)
-    response = JSONResponse(content=None, status_code=204)
+    response = Response(status_code=204)
     _clear_refresh_cookie(response)
     return response
 

@@ -167,9 +167,12 @@ class WebhookPayload(BaseModel):
     @model_validator(mode="after")
     def tif_market_order_rules(self) -> "WebhookPayload":
         if self.order_type == OrderType.MARKET:
-            if self.time_in_force not in (TimeInForce.FOK, TimeInForce.IOC):
+            allowed = {TimeInForce.FOK, TimeInForce.IOC}
+            if self.broker == "tradovate":
+                allowed.add(TimeInForce.DAY)
+            if self.time_in_force not in allowed:
                 raise ValueError(
-                    f"Market orders only support FOK or IOC time_in_force, got {self.time_in_force}"
+                    f"Market orders only support {', '.join(t.value for t in sorted(allowed, key=lambda t: t.value))} time_in_force, got {self.time_in_force}"
                 )
         return self
 

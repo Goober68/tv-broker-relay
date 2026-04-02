@@ -2,23 +2,16 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
-import re
+from pydantic import BaseModel
+from datetime import datetime
+
 from app.models.db import get_db
 from app.models.order import Order, OrderStatus
 from app.models.position import Position
 from app.models.broker_account import BrokerAccount
 from app.models.tenant import Tenant
 from app.dependencies.auth import get_current_tenant
-
-_FUTURES_CONTRACT_RE = re.compile(r'^(.+?)[FGHJKMNQUVXZ]\d{1,2}$')
-
-def _futures_root(contract: str) -> str:
-    m = _FUTURES_CONTRACT_RE.match(contract)
-    if m:
-        return m.group(1)
-    return ''.join(c for c in contract if c.isalpha())
-from pydantic import BaseModel
-from datetime import datetime
+from app.services.utils import futures_root, trading_day, build_commission_lookup, get_commission
 
 router = APIRouter(prefix="/api")
 
@@ -177,6 +170,7 @@ class DeliveryOut(BaseModel):
     order_id: int | None
     error_detail: str | None
     duration_ms: float | None
+    broker_latency_ms: float | None = None
     raw_payload: str | None
     user_agent: str | None = None
     broker_request:  str | None = None   # outbound JSON sent to broker (from joined order row)
@@ -253,6 +247,7 @@ async def list_webhook_deliveries(
             order_id=d.order_id,
             error_detail=d.error_detail or order_error,
             duration_ms=d.duration_ms,
+            broker_latency_ms=d.broker_latency_ms,
             raw_payload=d.raw_payload,
             user_agent=d.user_agent,
             broker_request=broker_request,
@@ -412,7 +407,7 @@ async def sync_positions(
             instrument_type = _infer_instrument_type(acct.broker, symbol)
 
             # Resolve multiplier
-            root = _futures_root(symbol)
+            root = futures_root(symbol)
             multiplier = (
                 DEFAULT_FUTURES_MULTIPLIERS.get(symbol)
                 or DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
@@ -599,7 +594,6 @@ class AccountPnlSummary(BaseModel):
     bars: list[PnlBar]
     # Account balance
     balance: float | None = None
-    commission_per_contract: float | None = None
     # Drawdown tracking
     max_total_drawdown: float | None = None   # account limit
     max_daily_drawdown: float | None = None   # account limit
@@ -628,15 +622,6 @@ async def get_pnl_summary(
 
     ET = ZoneInfo("America/New_York")
     now = datetime.now(timezone.utc)
-
-    def _trading_day(ts):
-        """Convert a UTC timestamp to its futures trading day.
-        Trading day rolls at 5pm ET — a fill at 4:59pm ET belongs to that
-        calendar day; a fill at 5:01pm ET belongs to the next day."""
-        ts_et = ts.astimezone(ET)
-        if ts_et.hour >= 17:  # at or after 5pm ET → next trading day
-            return (ts_et + timedelta(days=1)).date()
-        return ts_et.date()
 
     # Determine lookback and truncation based on period
     if period == "15min":
@@ -705,33 +690,10 @@ async def get_pnl_summary(
         # realized_events = [(timestamp, pnl, symbol), ...]
         realized_events = []
         open_lots: dict[str, deque] = {}  # symbol → deque of (qty, price, multiplier)
-        default_commission = acct.commission_per_contract or 0.0
-        instrument_map = acct.instrument_map or {}
-
-        # Build reverse lookup: target_symbol/root -> commission
-        # instrument_map is keyed by TradingView symbol (e.g. "MNQ1!") but
-        # orders use broker symbols (e.g. "MNQM6"). Match via target_symbol.
-        _commission_by_target = {}
-        for _key, _val in instrument_map.items():
-            if isinstance(_val, dict) and "commission" in _val:
-                comm = float(_val["commission"])
-                _commission_by_target[_key] = comm
-                ts = _val.get("target_symbol", "")
-                if ts:
-                    _commission_by_target[ts] = comm
-                    _commission_by_target[_futures_root(ts)] = comm
-                _commission_by_target[_futures_root(_key)] = comm
-
-        def _get_commission(symbol: str) -> float:
-            """Look up per-product commission, fall back to account default."""
-            # Try full symbol (e.g. MNQM6)
-            if symbol in _commission_by_target:
-                return _commission_by_target[symbol]
-            # Try root symbol (e.g. MNQ)
-            root = _futures_root(symbol)
-            if root in _commission_by_target:
-                return _commission_by_target[root]
-            return default_commission
+        comm_lookup, default_commission = build_commission_lookup(
+            acct.instrument_map, acct.commission_per_contract or 0.0,
+            broker=acct.broker, account_type=acct.account_type,
+        )
 
         for fill in fills:
             ts = fill.created_at
@@ -783,8 +745,8 @@ async def get_pnl_summary(
 
                     # Deduct round-trip commission (entry + exit side)
                     # Prefer per-fill commission from broker, fall back to config
-                    entry_comm = lot_comm if lot_comm is not None else _get_commission(sym)
-                    exit_comm = fill_comm if fill_comm is not None else _get_commission(sym)
+                    entry_comm = lot_comm if lot_comm is not None else get_commission(sym, comm_lookup, default_commission)
+                    exit_comm = fill_comm if fill_comm is not None else get_commission(sym, comm_lookup, default_commission)
                     total_comm = (entry_comm + exit_comm) * match_qty
                     if total_comm > 0:
                         pnl -= total_comm
@@ -813,18 +775,18 @@ async def get_pnl_summary(
                 bucket = ts.replace(minute=(ts.minute // 15) * 15, second=0, microsecond=0)
             elif period == "daily":
                 # Use futures trading day (rolls at 5pm ET)
-                td = _trading_day(ts)
+                td = trading_day(ts)
                 bucket = datetime(td.year, td.month, td.day, tzinfo=timezone.utc)
             elif period == "weekly":
                 # Truncate to Monday of the trading day's week
-                td = _trading_day(ts)
+                td = trading_day(ts)
                 monday = td - timedelta(days=td.weekday())
                 bucket = datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc)
             elif period == "monthly":
-                td = _trading_day(ts)
+                td = trading_day(ts)
                 bucket = datetime(td.year, td.month, 1, tzinfo=timezone.utc)
             else:  # yearly
-                td = _trading_day(ts)
+                td = trading_day(ts)
                 bucket = datetime(td.year, 1, 1, tzinfo=timezone.utc)
 
             key = bucket.isoformat()
@@ -870,7 +832,7 @@ async def get_pnl_summary(
         today_cumulative = 0.0
         today_hwm = 0.0
         # Trading day starts at 5pm ET previous calendar day
-        current_trading_day = _trading_day(now)
+        current_trading_day = trading_day(now)
         today_start_et = datetime(
             current_trading_day.year, current_trading_day.month, current_trading_day.day,
             17, 0, 0, tzinfo=ET,
@@ -889,14 +851,6 @@ async def get_pnl_summary(
         current_drawdown = round(hwm - all_time_cumulative, 2)
         today_drawdown = round(today_hwm - today_cumulative, 2)
 
-        # Drawdown remaining: prefer balance-based calc if drawdown_floor is set
-        if acct.drawdown_floor is not None and balance is not None:
-            drawdown_remaining = round(balance - acct.drawdown_floor, 2)
-        elif acct.max_total_drawdown:
-            drawdown_remaining = round(acct.max_total_drawdown - current_drawdown, 2)
-        else:
-            drawdown_remaining = None
-
         # Fetch account balance from broker
         balance = None
         try:
@@ -908,13 +862,20 @@ async def get_pnl_summary(
         except Exception:
             pass  # balance is optional — don't fail the summary
 
+        # Drawdown remaining: prefer balance-based calc if drawdown_floor is set
+        if acct.drawdown_floor is not None and balance is not None:
+            drawdown_remaining = round(balance - acct.drawdown_floor, 2)
+        elif acct.max_total_drawdown:
+            drawdown_remaining = round(acct.max_total_drawdown - current_drawdown, 2)
+        else:
+            drawdown_remaining = None
+
         summaries.append(AccountPnlSummary(
             broker       = acct.broker,
             account      = acct.account_alias,
             display_name = acct.display_name,
             bars         = bars,
             balance      = balance,
-            commission_per_contract = acct.commission_per_contract,
             max_total_drawdown = acct.max_total_drawdown,
             max_daily_drawdown = acct.max_daily_drawdown,
             current_drawdown   = current_drawdown,

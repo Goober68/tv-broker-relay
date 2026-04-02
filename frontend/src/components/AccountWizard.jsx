@@ -147,6 +147,7 @@ export default function AccountWizard({ onDone, onCancel, oauthData }) {
           alias: v.alias || name,
           display_name: v.alias || name,
           prop_firm: isProp,
+          account_type: accountType,
         }))
       if (!accounts.length) {
         setError('Select at least one account')

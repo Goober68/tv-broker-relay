@@ -34,19 +34,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Futures month codes: F=Jan, G=Feb, H=Mar, J=Apr, K=May, M=Jun,
-# N=Jul, Q=Aug, U=Sep, V=Oct, X=Nov, Z=Dec
-import re
-_FUTURES_CONTRACT_RE = re.compile(r'^(.+?)[FGHJKMNQUVXZ]\d{1,2}$')
-
-def _futures_root(contract: str) -> str:
-    """Extract futures product root from contract symbol.
-    MNQM6 -> MNQ, ESH5 -> ES, NQM6 -> NQ, CLZ25 -> CL.
-    Falls back to stripping all digits."""
-    m = _FUTURES_CONTRACT_RE.match(contract)
-    if m:
-        return m.group(1)
-    return ''.join(c for c in contract if c.isalpha())
+from app.services.utils import futures_root as _futures_root
 
 
 async def _run_forever(name: str, interval: int, coro_factory):
@@ -478,188 +466,7 @@ async def _import_tradovate_report_csv(db, csv_text, broker_account, existing_id
     return imported
 
 
-async def _import_tradovate_rest_fills(db, fills, orders_by_id, broker_account, numeric_id, existing_ids) -> int:
-    """Import fills from REST /fill/list, using /order/list for account attribution and contract resolution."""
-    from app.models.order import Order, DEFAULT_FUTURES_MULTIPLIERS
-    import httpx
-
-    # Resolve contracts for fills whose orders lack contractName
-    contracts_cache = {}
-    base_url = broker_account.credentials_encrypted  # we don't have base_url here, derive from order
-    # Actually we need the token/base_url — get from creds
-    from app.services.credentials import decrypt_credentials
-    creds = decrypt_credentials(broker_account.credentials_encrypted)
-    token = creds.get("access_token", "")
-    base_url = creds.get("base_url", "https://live.tradovateapi.com/v1")
-
-    imported = 0
-    for fill in fills:
-        fill_id = str(fill.get("id", ""))
-        if not fill_id:
-            continue
-
-        dedup_id = f"fill_{fill_id}"
-        if dedup_id in existing_ids or fill_id in existing_ids:
-            continue
-
-        order_id = fill.get("orderId")
-        order_data = orders_by_id.get(order_id, {})
-
-        # Must have a matching order with accountId to attribute correctly
-        order_acct_id = order_data.get("accountId")
-        if not order_acct_id or int(order_acct_id) != numeric_id:
-            continue
-
-        action_str = (order_data.get("action") or fill.get("action", "")).strip()
-        if action_str.lower() not in ("buy", "sell"):
-            continue
-
-        # Resolve contract
-        contract = order_data.get("contractName") or ""
-        if not contract:
-            contract_id = fill.get("contractId") or order_data.get("contractId")
-            if contract_id:
-                if contract_id not in contracts_cache:
-                    try:
-                        async with httpx.AsyncClient(timeout=10.0) as client:
-                            cr = await client.get(
-                                f"{base_url}/contract/item?id={contract_id}",
-                                headers={"Authorization": f"Bearer {token}"},
-                            )
-                            if cr.status_code == 200:
-                                contracts_cache[contract_id] = cr.json().get("name", "")
-                            else:
-                                contracts_cache[contract_id] = ""
-                    except Exception:
-                        contracts_cache[contract_id] = ""
-                contract = contracts_cache.get(contract_id, "")
-        if not contract:
-            continue
-
-        root = _futures_root(contract)
-        multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
-
-        price = float(fill.get("price", 0))
-        qty = float(fill.get("qty", fill.get("filledQty", 0)))
-        if price == 0 or qty == 0:
-            continue
-
-        ts_str = fill.get("timestamp", "")
-        try:
-            from datetime import datetime as dt
-            ts = dt.fromisoformat(ts_str.replace("Z", "+00:00"))
-        except Exception:
-            ts = datetime.now(timezone.utc)
-
-        # No commission from REST /fill/list — will be backfilled from report API later
-        order = Order(
-            created_at=ts,
-            updated_at=ts,
-            tenant_id=broker_account.tenant_id,
-            broker="tradovate",
-            account=broker_account.account_alias,
-            symbol=contract,
-            instrument_type="FUTURE",
-            action=action_str.upper(),
-            order_type="MARKET",
-            quantity=qty,
-            multiplier=multiplier,
-            status="FILLED",
-            filled_quantity=qty,
-            avg_fill_price=price,
-            broker_order_id=dedup_id,
-            time_in_force="GTC",
-            comment="Synced from Tradovate (rest)",
-        )
-        db.add(order)
-        imported += 1
-        existing_ids.add(dedup_id)
-
-    return imported
-
-
-async def _import_tradovate_ws_fills(db, fills, orders_by_id, broker_account, numeric_id, existing_ids) -> int:
-    """Import fills from WebSocket sync response."""
-    from app.models.order import Order, DEFAULT_FUTURES_MULTIPLIERS
-
-    imported = 0
-    for fill in fills:
-        fill_id = str(fill.get("id", fill.get("orderId", "")))
-        if not fill_id:
-            continue
-
-        dedup_id = f"fill_{fill_id}" if not fill_id.startswith("fill_") else fill_id
-        if dedup_id in existing_ids or fill_id in existing_ids:
-            continue
-
-        order_id = fill.get("orderId")
-        order_data = orders_by_id.get(order_id, {})
-
-        # Filter by account
-        order_acct_id = order_data.get("accountId")
-        if order_acct_id:
-            if int(order_acct_id) != numeric_id:
-                continue
-        elif not order_data:
-            continue
-
-        action_str = (order_data.get("action") or fill.get("action", "")).strip().upper()
-        if action_str in ("0",):
-            action_str = "BUY"
-        elif action_str in ("1",):
-            action_str = "SELL"
-        if action_str not in ("BUY", "SELL"):
-            continue
-
-        contract = (
-            order_data.get("contractName") or order_data.get("symbol")
-            or fill.get("contractName") or ""
-        )
-        if not contract:
-            continue
-
-        root = _futures_root(contract)
-        multiplier = DEFAULT_FUTURES_MULTIPLIERS.get(root, 1.0)
-
-        price = float(fill.get("price", 0))
-        qty = float(fill.get("qty", fill.get("filledQty", 0)))
-        if price == 0 or qty == 0:
-            continue
-
-        ts_str = fill.get("timestamp", "")
-        try:
-            from datetime import datetime as dt
-            ts = dt.fromisoformat(ts_str.replace("Z", "+00:00"))
-        except Exception:
-            ts = datetime.now(timezone.utc)
-
-        order_type_str = (order_data.get("orderType") or "Market").upper()
-        ot = "MARKET" if "MARKET" in order_type_str else "LIMIT" if "LIMIT" in order_type_str else "STOP"
-
-        order = Order(
-            created_at=ts,
-            updated_at=ts,
-            tenant_id=broker_account.tenant_id,
-            broker="tradovate",
-            account=broker_account.account_alias,
-            symbol=contract,
-            instrument_type="FUTURE",
-            action=action_str,
-            order_type=ot,
-            quantity=qty,
-            multiplier=multiplier,
-            status="FILLED",
-            filled_quantity=qty,
-            avg_fill_price=price,
-            broker_order_id=dedup_id,
-            time_in_force="GTC",
-            comment="Synced from Tradovate (websocket)",
-        )
-        db.add(order)
-        imported += 1
-        existing_ids.add(dedup_id)
-
-    return imported
+# (dead REST/WS fill import functions removed — Report API is the primary sync method)
 
 
 async def _sync_oanda_closed_trades(db, broker, pos):
@@ -1462,11 +1269,8 @@ async def _tradovate_token_refresh_once():
         )
         accounts = result.scalars().all()
 
-        refreshed_tenants = set()
+        refreshed_tokens = {}  # old_token → new_token
         for acct in accounts:
-            if str(acct.tenant_id) in refreshed_tenants:
-                continue
-
             try:
                 creds = decrypt_credentials(acct.credentials_encrypted)
             except Exception:
@@ -1477,6 +1281,12 @@ async def _tradovate_token_refresh_once():
 
             token = creds.get("access_token")
             if not token:
+                continue
+
+            # If we already renewed this exact token, just apply the new one
+            if token in refreshed_tokens:
+                creds["access_token"] = refreshed_tokens[token]
+                acct.credentials_encrypted = encrypt_credentials(creds)
                 continue
 
             base_url = creds.get("base_url", "https://live.tradovateapi.com/v1")
@@ -1494,30 +1304,18 @@ async def _tradovate_token_refresh_once():
                         if not new_token:
                             continue
 
-                        # Update ALL Tradovate accounts for this tenant
-                        tenant_accts = await db.execute(
-                            select(BrokerAccount).where(
-                                BrokerAccount.tenant_id == acct.tenant_id,
-                                BrokerAccount.broker == "tradovate",
-                                BrokerAccount.is_active == True,  # noqa: E712
-                            )
-                        )
-                        for ta in tenant_accts.scalars().all():
-                            try:
-                                ta_creds = decrypt_credentials(ta.credentials_encrypted)
-                                ta_creds["access_token"] = new_token
-                                ta.credentials_encrypted = encrypt_credentials(ta_creds)
-                            except Exception:
-                                pass
-                        await db.commit()
-                        refreshed_tenants.add(str(acct.tenant_id))
-                        logger.info(f"Tradovate tokens renewed for tenant {acct.tenant_id}")
+                        refreshed_tokens[token] = new_token
+                        creds["access_token"] = new_token
+                        acct.credentials_encrypted = encrypt_credentials(creds)
+                        logger.info(f"Tradovate token renewed for {acct.account_alias}")
                     elif resp.status_code == 401:
                         logger.warning(
                             f"Tradovate token expired for {acct.account_alias} — needs OAuth re-auth"
                         )
             except Exception:
                 logger.debug(f"Tradovate token renew error for {acct.account_alias}", exc_info=True)
+
+        await db.commit()
 
 
 # ── Task Launcher ──────────────────────────────────────────────────────────────

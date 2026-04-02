@@ -280,8 +280,12 @@ function DeliveryRow({ d }) {
           {d.algo}
         </span>
       )}
-      <span className="font-mono text-xs text-base-500 w-14 flex-shrink-0 text-right">
-        {d.duration_ms ? `${d.duration_ms.toFixed(0)}ms` : '—'}
+      <span className="font-mono text-xs text-base-500 flex-shrink-0 text-right" title={d.broker_latency_ms ? `Processing: ${Math.max(0, d.duration_ms - d.broker_latency_ms).toFixed(0)}ms | Broker: ${d.broker_latency_ms.toFixed(0)}ms` : ''}>
+        {d.duration_ms ? (
+          d.broker_latency_ms ? (
+            <>{Math.max(0, d.duration_ms - d.broker_latency_ms).toFixed(0)}<span className="text-base-600">+</span>{d.broker_latency_ms.toFixed(0)}<span className="text-base-600">ms</span></>
+          ) : `${d.duration_ms.toFixed(0)}ms`
+        ) : '—'}
       </span>
       <span className="font-mono text-xs text-base-500 flex-1">{d.source_ip || '—'}</span>
       {d.error_detail && (

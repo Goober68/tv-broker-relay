@@ -854,7 +854,6 @@ function DrawdownSettings({ account, onRefresh }) {
   const [totalDD, setTotalDD] = useState(account.max_total_drawdown ?? '')
   const [dailyDD, setDailyDD] = useState(account.max_daily_drawdown ?? '')
   const [ddFloor, setDdFloor] = useState(account.drawdown_floor ?? '')
-  const [commission, setCommission] = useState(account.commission_per_contract ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -862,8 +861,7 @@ function DrawdownSettings({ account, onRefresh }) {
     setTotalDD(account.max_total_drawdown ?? '')
     setDailyDD(account.max_daily_drawdown ?? '')
     setDdFloor(account.drawdown_floor ?? '')
-    setCommission(account.commission_per_contract ?? '')
-  }, [account.max_total_drawdown, account.max_daily_drawdown, account.drawdown_floor, account.commission_per_contract])
+  }, [account.max_total_drawdown, account.max_daily_drawdown, account.drawdown_floor])
 
   const handleSave = async () => {
     setSaving(true)
@@ -872,7 +870,6 @@ function DrawdownSettings({ account, onRefresh }) {
         max_total_drawdown: totalDD === '' ? null : parseFloat(totalDD),
         max_daily_drawdown: dailyDD === '' ? null : parseFloat(dailyDD),
         drawdown_floor: ddFloor === '' ? null : parseFloat(ddFloor),
-        commission_per_contract: commission === '' ? null : parseFloat(commission),
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -885,16 +882,6 @@ function DrawdownSettings({ account, onRefresh }) {
     <div className="border-t border-base-800 pt-4">
       <p className="text-xs font-medium text-base-300 mb-3">Account settings</p>
       <div className="flex items-end gap-4 flex-wrap">
-        <div>
-          <label className="block text-[10px] text-base-500 mb-1">Commission $/contract/side</label>
-          <input
-            className="input py-1 text-xs font-mono w-28"
-            type="number" step="0.01" min="0"
-            placeholder="e.g. 2.88"
-            value={commission}
-            onChange={e => setCommission(e.target.value)}
-          />
-        </div>
         <div>
           <label className="block text-[10px] text-base-500 mb-1">Max total drawdown ($)</label>
           <input

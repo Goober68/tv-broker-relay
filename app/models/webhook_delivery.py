@@ -48,6 +48,7 @@ class WebhookDelivery(Base):
 
     # Timing
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    broker_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     def __repr__(self):
         return (

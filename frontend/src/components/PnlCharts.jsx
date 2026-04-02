@@ -134,8 +134,8 @@ export default function PnlCharts() {
           <div className={clsx(
             'grid gap-4',
             data.length === 1 ? 'grid-cols-1' :
-            data.length === 2 ? 'grid-cols-2' :
-            'grid-cols-2 xl:grid-cols-3'
+            data.length === 2 ? 'grid-cols-1 md:grid-cols-2' :
+            'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'
           )}>
             {paddedData.map(account => (
               <AccountPnlCard
@@ -165,6 +165,14 @@ function AccountPnlCard({ account, period, view }) {
     <div className="panel overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-base-800">
+        {account.balance != null && (
+          <div className="text-center mb-2">
+            <span className="text-xs text-base-500">Balance </span>
+            <span className="text-sm font-mono font-semibold text-base-100">
+              ${account.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BrokerIcon broker={account.broker} size={20} />

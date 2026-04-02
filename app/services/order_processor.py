@@ -1,6 +1,7 @@
 import uuid
 import json
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -393,6 +394,7 @@ async def process_webhook(
     if payload.broker == "oanda" and payload.action.value in ("buy", "sell"):
         order.broker_quantity = float(await _resolve_fifo_quantity(broker, order))
 
+    t_broker_start = time.monotonic()
     try:
         if replaced_order is not None:
             result = await broker.cancel_replace_order(
@@ -401,11 +403,13 @@ async def process_webhook(
         else:
             result = await broker.submit_order(order)
     except Exception as e:
+        order._broker_latency_ms = (time.monotonic() - t_broker_start) * 1000
         logger.exception(f"Exception during broker submission for order {order.id}")
         order.status = OrderStatus.ERROR
         order.error_message = str(e)
         await db.commit()
         return order
+    order._broker_latency_ms = (time.monotonic() - t_broker_start) * 1000
 
     if result.success:
         order.broker_order_id = result.broker_order_id
