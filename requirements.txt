@@ -17,3 +17,4 @@ cryptography==42.0.8
 stripe==10.5.0
 python-multipart==0.0.9
 aiofiles==23.2.1
+redis[hiredis]>=5.0.0

@@ -91,10 +91,10 @@ class PlanEnforcer:
 
     # ── Rate limit ────────────────────────────────────────────────────────────
 
-    def check_rate_limit(self) -> None:
+    async def check_rate_limit(self) -> None:
         """
         Sliding window rate limiter — requests_per_minute limit.
-        Uses in-memory counters; swap for Redis in production.
+        Uses Redis sorted set, falls back to in-memory counters.
         """
         import time
         limit = self.plan.requests_per_minute
@@ -102,12 +102,37 @@ class PlanEnforcer:
             return  # unlimited
 
         now = time.monotonic()
+        now_s = time.time()
+
+        # Try Redis first
+        try:
+            from app.redis import get_redis
+            r = await get_redis()
+            if r is not None:
+                key = f"ratelimit:{self.tenant_id}"
+                window_start = now_s - 60.0
+                pipe = r.pipeline()
+                pipe.zremrangebyscore(key, "-inf", window_start)
+                pipe.zcard(key)
+                pipe.zadd(key, {f"{now_s}": now_s})
+                pipe.expire(key, 120)
+                results = await pipe.execute()
+                count = results[1]  # zcard result
+                if count >= limit:
+                    raise PlanLimitExceeded(
+                        f"Rate limit exceeded: {limit} webhook requests per minute on the "
+                        f"{self.plan.display_name} plan. Slow down or upgrade."
+                    )
+                return
+        except PlanLimitExceeded:
+            raise
+        except Exception:
+            pass  # Fall through to in-memory
+
+        # In-memory fallback
         window_start = now - 60.0
-
         bucket = _rate_counters.setdefault(self.tenant_id, [])
-        # Purge old entries outside the window
         _rate_counters[self.tenant_id] = [t for t in bucket if t > window_start]
-
         if len(_rate_counters[self.tenant_id]) >= limit:
             raise PlanLimitExceeded(
                 f"Rate limit exceeded: {limit} webhook requests per minute on the "

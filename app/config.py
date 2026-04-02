@@ -6,6 +6,9 @@ class Settings(BaseSettings):
     # ── Database ───────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://relay:relay@localhost:5432/relay"
 
+    # ── Redis ─────────────────────────────────────────────────────────────────
+    redis_url: str = "redis://localhost:6379/0"
+
     # ── JWT ───────────────────────────────────────────────────────────────────
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"

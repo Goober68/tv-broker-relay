@@ -313,6 +313,20 @@ class OandaStreamManager:
 
         self._prices[symbol] = {"bid": bid, "ask": ask, "mid": mid}
 
+        # Publish to Redis for cross-service price cache
+        try:
+            from app.redis import get_redis
+            import json as _json
+            r = await get_redis()
+            if r:
+                await r.hset(
+                    f"prices:oanda:{self.account}",
+                    symbol,
+                    _json.dumps({"bid": bid, "ask": ask, "mid": mid}),
+                )
+        except Exception:
+            pass  # never block price processing for Redis
+
         # Update position P&L in DB
         await self._update_position_pnl(symbol, mid)
 

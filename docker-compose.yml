@@ -1,27 +1,116 @@
-# Production docker-compose
+# Production docker-compose — 3-service architecture
 # Usage: docker compose up -d
 # Requires: .env file (copy from .env.example and fill in)
+#
+# Services:
+#   relay     — webhook ingestion + broker submission (port 8001)
+#   dashboard — user-facing API + SSE + frontend (port 8002)
+#   worker    — background tasks + stream managers (port 8003, internal only)
 
 services:
 
-  app:
-    build: .
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    networks:
+      - internal
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  relay:
+    build:
+      context: .
+      args:
+        SERVICE: relay
     restart: unless-stopped
     env_file: .env
     environment:
-      # Override DATABASE_URL to use the internal db service hostname
       DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD}@db:5432/relay
+      REDIS_URL: redis://redis:6379/0
+      PORT: "8001"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     networks:
       - internal
       - web
-    # Don't expose port directly — Caddy proxies to it
     expose:
-      - "8000"
+      - "8001"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  dashboard:
+    build:
+      context: .
+      args:
+        SERVICE: dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD}@db:5432/relay
+      REDIS_URL: redis://redis:6379/0
+      PORT: "8002"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+      - web
+    expose:
+      - "8002"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  worker:
+    build:
+      context: .
+      args:
+        SERVICE: worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD}@db:5432/relay
+      REDIS_URL: redis://redis:6379/0
+      PORT: "8003"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - internal
+    # No web network — worker has no external traffic
+    expose:
+      - "8003"
     logging:
       driver: "json-file"
       options:
@@ -29,7 +118,6 @@ services:
         max-file: "5"
 
   migrate:
-    # Runs Alembic migrations before the app starts, then exits
     build: .
     command: alembic upgrade head
     env_file: .env
@@ -53,7 +141,6 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - internal
-    # Not exposed to host — only reachable inside the internal network
     expose:
       - "5432"
     healthcheck:
@@ -76,12 +163,13 @@ services:
       - "443:443/udp"  # HTTP/3 (QUIC)
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data      # TLS certificates (persisted across restarts)
+      - caddy_data:/data
       - caddy_config:/config
     networks:
       - web
     depends_on:
-      - app
+      - relay
+      - dashboard
     logging:
       driver: "json-file"
       options:
@@ -90,12 +178,13 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   caddy_data:
   caddy_config:
 
 networks:
   internal:
     driver: bridge
-    internal: true   # no external access to this network
+    internal: true
   web:
     driver: bridge

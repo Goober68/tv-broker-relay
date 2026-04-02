@@ -158,7 +158,7 @@ async def receive_webhook(
     # Plan checks
     try:
         enforcer = await PlanEnforcer.load(tenant_id, db)
-        enforcer.check_rate_limit()
+        await enforcer.check_rate_limit()
         enforcer.check_order_type(payload.order_type.value)
     except PlanLimitExceeded as e:
         duration_ms = (time.monotonic() - t_start) * 1000

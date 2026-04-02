@@ -18,6 +18,7 @@ from app.services.offset_converter import convert_sl_tp
 
 logger = logging.getLogger(__name__)
 
+# In-memory fallback for dedup when Redis is unavailable
 _recent_signals: dict[str, datetime] = {}
 _DEDUP_CLEANUP_AFTER = 1000
 
@@ -32,7 +33,70 @@ def _cleanup_dedup_cache(window_seconds: int):
 
 
 def _dedup_key(tenant_id: uuid.UUID, payload: WebhookPayload) -> str:
-    return f"{tenant_id}:{payload.broker}:{payload.account}:{payload.symbol}:{payload.action}:{payload.quantity}"
+    return f"dedup:{tenant_id}:{payload.broker}:{payload.account}:{payload.symbol}:{payload.action}:{payload.quantity}"
+
+
+async def _check_dedup(key: str, window_seconds: int) -> bool:
+    """
+    Returns True if this is a duplicate signal.
+    Uses Redis SETNX with TTL, falls back to in-memory dict.
+    """
+    from app.redis import get_redis
+    try:
+        r = await get_redis()
+        if r is not None:
+            was_set = await r.set(key, "1", nx=True, ex=window_seconds)
+            return not was_set  # True = duplicate (key already existed)
+    except Exception:
+        logger.debug("Redis dedup unavailable, using in-memory fallback")
+
+    # In-memory fallback
+    now = datetime.now(timezone.utc)
+    _cleanup_dedup_cache(window_seconds)
+    last_seen = _recent_signals.get(key)
+    if last_seen and (now - last_seen) < timedelta(seconds=window_seconds):
+        return True
+    _recent_signals[key] = now
+    return False
+
+
+async def _get_stream_price(broker: str, account: str, symbol: str) -> float | None:
+    """
+    Get live mid price for SL/TP conversion.
+    Tries: in-process stream manager → Redis cache → None.
+    """
+    # 1. In-process stream manager (same process, instant)
+    try:
+        if broker == "oanda":
+            from app.services.oanda_stream import get_manager
+            mgr = get_manager("oanda", account)
+        elif broker == "tradovate":
+            from app.services.tradovate_stream import get_manager as get_tv_manager
+            mgr = get_tv_manager("tradovate", account)
+        else:
+            mgr = None
+        if mgr:
+            cached = mgr.get_price(symbol)
+            if cached and cached.get("mid"):
+                return cached["mid"]
+    except Exception:
+        pass
+
+    # 2. Redis price cache (set by worker/stream manager)
+    try:
+        from app.redis import get_redis
+        r = await get_redis()
+        if r:
+            raw = await r.hget(f"prices:{broker}:{account}", symbol)
+            if raw:
+                import json as _json
+                data = _json.loads(raw)
+                if data.get("mid"):
+                    return data["mid"]
+    except Exception:
+        pass
+
+    return None
 
 
 async def _get_pending_exposure(
@@ -185,13 +249,9 @@ async def process_webhook(
     settings = get_settings()
     # --- 1. Deduplication ---
     dedup_key = _dedup_key(tenant_id, payload)
-    now = datetime.now(timezone.utc)
-    _cleanup_dedup_cache(settings.duplicate_window_seconds)
-    last_seen = _recent_signals.get(dedup_key)
-    if last_seen and (now - last_seen) < timedelta(seconds=settings.duplicate_window_seconds):
+    if await _check_dedup(dedup_key, settings.duplicate_window_seconds):
         logger.warning(f"Duplicate signal suppressed: {dedup_key}")
         raise ValueError(f"Duplicate signal suppressed (within {settings.duplicate_window_seconds}s window)")
-    _recent_signals[dedup_key] = now
 
 
     # --- 2. Cancel-replace ---
@@ -296,36 +356,19 @@ async def process_webhook(
                    or payload.trailing_distance is not None or payload.trail_trigger is not None)
     needs_conversion = payload.sl_tp_type in ("pips", "pipettes", "ticks", "points") and has_offsets
 
-    if needs_conversion and payload.broker == "oanda":
-        from app.services.oanda_stream import get_manager
-        manager = get_manager("oanda", payload.account)
-        if manager:
-            cached = manager.get_price(payload.symbol)
-            if cached:
-                entry_price = cached["mid"]
-                logger.info(
-                    f"{payload.symbol}: using stream mid {entry_price:.5f} "
-                    f"as entry price for {payload.sl_tp_type} SL/TP conversion"
-                    + (f" (overriding payload price {payload.price})" if payload.price else "")
-                )
-
-    if needs_conversion and payload.broker == "tradovate":
-        # Use cached stream price first (instant), fall back to payload price
-        from app.services.tradovate_stream import get_manager as get_tv_manager
-        tv_manager = get_tv_manager("tradovate", payload.account)
-        cached_quote = tv_manager.get_price(payload.symbol) if tv_manager else None
-        if cached_quote and cached_quote.get("mid"):
-            entry_price = cached_quote["mid"]
+    if needs_conversion:
+        stream_price = await _get_stream_price(payload.broker, payload.account, payload.symbol)
+        if stream_price:
+            entry_price = stream_price
             logger.info(
-                f"{payload.symbol}: using Tradovate stream mid {entry_price:.2f} "
+                f"{payload.symbol}: using stream mid {entry_price} "
                 f"as entry price for {payload.sl_tp_type} SL/TP conversion"
                 + (f" (overriding payload price {payload.price})" if payload.price else "")
             )
         elif payload.price:
-            # Stream not running (no open positions yet) — use payload price
             entry_price = payload.price
             logger.info(
-                f"{payload.symbol}: no Tradovate stream, using payload price {entry_price:.2f} "
+                f"{payload.symbol}: no stream price, using payload price {entry_price} "
                 f"for {payload.sl_tp_type} SL/TP conversion"
             )
 

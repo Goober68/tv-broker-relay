@@ -367,6 +367,21 @@ class TradovateStreamManager:
         if root != symbol:
             self._prices[root] = self._prices[symbol]
 
+        # Publish to Redis for cross-service price cache
+        try:
+            from app.redis import get_redis
+            import json as _json
+            r = await get_redis()
+            if r:
+                price_json = _json.dumps({"bid": bid, "ask": ask, "mid": mid, "last": last})
+                pipe = r.pipeline()
+                pipe.hset(f"prices:tradovate:{self.account}", symbol, price_json)
+                if root != symbol:
+                    pipe.hset(f"prices:tradovate:{self.account}", root, price_json)
+                await pipe.execute()
+        except Exception:
+            pass  # never block price processing for Redis
+
         # Update position last_price in DB
         await self._update_position_price(symbol, mid)
 

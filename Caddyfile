@@ -1,34 +1,29 @@
-# Caddyfile
+# Caddyfile — 3-service routing
 # Caddy automatically obtains and renews TLS certificates from Let's Encrypt.
-# Replace yourdomain.com with your actual domain.
 #
-# Requirements:
-#   - Domain DNS A record must point to this server's IP
-#   - Ports 80 and 443 must be open in your firewall/security group
+# Routing:
+#   /webhook/*  → relay:8001   (latency-critical webhook ingestion)
+#   everything  → dashboard:8002 (API, SSE, frontend)
 
 tvbrokerrelay.com {
-    # Reverse proxy all requests to the FastAPI app
-    reverse_proxy app:8000
+    # Webhook traffic → relay service
+    handle /webhook/* {
+        reverse_proxy relay:8001
+    }
+
+    # Everything else → dashboard service
+    handle {
+        reverse_proxy dashboard:8002
+    }
 
     # Security headers
     header {
-        # Prevent clickjacking
         X-Frame-Options "DENY"
-        # Prevent MIME sniffing
         X-Content-Type-Options "nosniff"
-        # Enable HSTS (1 year)
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        # Referrer policy
         Referrer-Policy "strict-origin-when-cross-origin"
-        # Remove server identification
         -Server
     }
-
-    # Rate limiting for auth endpoints (brute force protection)
-    # Requires Caddy to be built with the rate_limit module, or use a WAF.
-    # Uncomment if available:
-    # @auth_routes path /auth/login /auth/register
-    # rate_limit @auth_routes 10r/m
 
     # Access logs
     log {
@@ -39,8 +34,3 @@ tvbrokerrelay.com {
         format json
     }
 }
-
-# Redirect www → apex (optional)
-# www.yourdomain.com {
-#     redir https://yourdomain.com{uri} permanent
-# }
