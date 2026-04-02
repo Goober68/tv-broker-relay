@@ -103,8 +103,9 @@ class Order(Base):
     )
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), index=True)
+    broker_account_id: Mapped[int | None] = mapped_column(ForeignKey("broker_accounts.id"), nullable=True, index=True)
 
-    # Routing
+    # Routing (kept for quick access — broker_account_id is the canonical FK)
     broker:  Mapped[str] = mapped_column(String(32))
     account: Mapped[str] = mapped_column(String(64))
 

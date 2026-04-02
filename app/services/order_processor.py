@@ -311,7 +311,8 @@ async def process_webhook(
 
     # --- 4. Risk checks ---
     pos = await get_or_create_position(
-        db, tenant_id, payload.broker, payload.account, payload.symbol
+        db, tenant_id, payload.broker, payload.account, payload.symbol,
+        broker_account_id=cached_broker_account.id if cached_broker_account else None,
     )
     pending_exposure = await _get_pending_exposure(
         db, tenant_id, payload.broker, payload.account, payload.symbol
@@ -404,6 +405,7 @@ async def process_webhook(
     raw_payload_str = json.dumps(payload.model_dump(exclude={"secret"}, mode="json"))
     order = Order(
         tenant_id=tenant_id,
+        broker_account_id=cached_broker_account.id if cached_broker_account else None,
         broker=payload.broker,
         account=payload.account,
         symbol=payload.symbol,

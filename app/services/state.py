@@ -25,7 +25,8 @@ def _resolve_multiplier(order: Order) -> float:
 
 
 async def get_or_create_position(
-    db: AsyncSession, tenant_id: uuid.UUID, broker: str, account: str, symbol: str
+    db: AsyncSession, tenant_id: uuid.UUID, broker: str, account: str, symbol: str,
+    broker_account_id: int | None = None,
 ) -> Position:
     result = await db.execute(
         select(Position).where(
@@ -37,9 +38,14 @@ async def get_or_create_position(
     )
     pos = result.scalar_one_or_none()
     if pos is None:
-        pos = Position(tenant_id=tenant_id, broker=broker, account=account, symbol=symbol)
+        pos = Position(
+            tenant_id=tenant_id, broker=broker, account=account, symbol=symbol,
+            broker_account_id=broker_account_id,
+        )
         db.add(pos)
         await db.flush()
+    elif broker_account_id and not pos.broker_account_id:
+        pos.broker_account_id = broker_account_id
     return pos
 
 
