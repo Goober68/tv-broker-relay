@@ -25,7 +25,28 @@ jobs:
       - name: Run tests
         run: pytest -v --tb=short
 
-  deploy:
+  deploy-staging:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+
+    steps:
+      - name: Deploy to staging
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/tv-broker-relay
+            git fetch origin dev
+            git checkout dev
+            git pull origin dev
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml -p relay-staging build app
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml -p relay-staging up -d
+            echo "Staging deployed $(git rev-parse --short HEAD) at $(date)"
+
+  deploy-production:
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -39,7 +60,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/tv-broker-relay
+            git checkout main
             git pull origin main
             docker compose build app
             docker compose up -d app
-            echo "Deployed $(git rev-parse --short HEAD) at $(date)"
+            echo "Production deployed $(git rev-parse --short HEAD) at $(date)"
