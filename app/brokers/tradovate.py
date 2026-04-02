@@ -295,7 +295,7 @@ class TradovateBroker(BrokerBase):
 
             bracket: dict = {
                 "qty":          int(order.quantity),
-                "trailingStop": True,
+                "trailingStop": False,  # false when using autoTrail
                 "stopLoss":     abs(order.trail_dist) * loss,
             }
             if order.take_profit is not None:
@@ -323,21 +323,22 @@ class TradovateBroker(BrokerBase):
                 auto_trail["freq"] = order.trail_update
             bracket["autoTrail"] = auto_trail
 
-            # Strategy orders don't support native GTD — use GTC and let
-            # the gtd_expiry background task enforce the expiry.
-            strategy_tif = "GTC" if order.time_in_force == TimeInForce.GTD else tif
             entry_version: dict = {
                 "orderQty":    int(order.quantity),
                 "orderType":   order_type_map[order.order_type],
-                "timeInForce": strategy_tif,
+                "timeInForce": tif,
             }
             if order.price and order.order_type != OrderType.MARKET:
                 entry_version["price"] = order.price
 
-            params_str = _json.dumps({
+            params_dict = {
                 "entryVersion": entry_version,
                 "brackets": [bracket],
-            })
+            }
+            # GTD expireTime goes at the params level (sibling of entryVersion/brackets)
+            if order.time_in_force == TimeInForce.GTD and order.expire_at:
+                params_dict["expireTime"] = order.expire_at.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            params_str = _json.dumps(params_dict)
             strat_body = {
                 "accountId":          acct_id,
                 "accountSpec":        order.account,
@@ -387,7 +388,13 @@ class TradovateBroker(BrokerBase):
                         broker_request=body_str,
                         broker_response=_json.dumps(data, default=str),
                     )
-                order_id = str(data.get("orderId", ""))
+                # startOrderStrategy returns {"orderStrategy": {"id": ...}}
+                # placeOrder/placeOSO returns {"orderId": ...}
+                order_id = str(
+                    data.get("orderId")
+                    or data.get("orderStrategy", {}).get("id")
+                    or ""
+                )
                 is_open = order.order_type != OrderType.MARKET
                 return BrokerOrderResult(
                     success=True, broker_order_id=order_id, order_open=is_open,
@@ -605,29 +612,46 @@ class TradovateBroker(BrokerBase):
     async def poll_order_status(
         self, broker_order_id: str, account: str
     ) -> OrderStatusResult:
-        """Poll Tradovate order status."""
+        """Poll Tradovate order status. Checks both /order/ and /orderStrategy/."""
         token = await self._ensure_authenticated()
         async with httpx.AsyncClient(headers=self._headers(token), timeout=10.0) as client:
             try:
+                # Try regular order first
                 resp = await client.get(
-                    f"{self.base_url}/order/{broker_order_id}"
+                    f"{self.base_url}/order/item",
+                    params={"id": broker_order_id},
                 )
-                if resp.status_code == 404:
-                    return OrderStatusResult(found=False)
-                resp.raise_for_status()
-                order = resp.json()
-                status = order.get("orderStatus", "")
-                if status == "Filled":
-                    filled = float(order.get("filledQty", 0))
-                    avg = float(order.get("avgPrice", 0)) or None
-                    return OrderStatusResult(
-                        found=True, is_filled=True,
-                        filled_quantity=filled, avg_fill_price=avg,
-                    )
-                elif status in ("Cancelled", "Expired", "Rejected"):
-                    return OrderStatusResult(found=True, is_cancelled=True)
-                else:
-                    return OrderStatusResult(found=True, is_open=True)
+                if resp.status_code == 200:
+                    order = resp.json()
+                    status = order.get("orderStatus", "")
+                    if status == "Filled":
+                        filled = float(order.get("filledQty", 0))
+                        avg = float(order.get("avgPrice", 0)) or None
+                        return OrderStatusResult(
+                            found=True, is_filled=True,
+                            filled_quantity=filled, avg_fill_price=avg,
+                        )
+                    elif status in ("Cancelled", "Expired", "Rejected"):
+                        return OrderStatusResult(found=True, is_cancelled=True)
+                    else:
+                        return OrderStatusResult(found=True, is_open=True)
+
+                # Not a regular order — try order strategy
+                resp2 = await client.get(
+                    f"{self.base_url}/orderStrategy/item",
+                    params={"id": broker_order_id},
+                )
+                if resp2.status_code == 200:
+                    strat = resp2.json()
+                    status = strat.get("status", "")
+                    if status == "ActiveStrategy":
+                        return OrderStatusResult(found=True, is_open=True)
+                    elif status in ("InactiveStrategy", "FinishedStrategy"):
+                        return OrderStatusResult(found=True, is_cancelled=True)
+                    else:
+                        return OrderStatusResult(found=True, is_open=True)
+
+                return OrderStatusResult(found=False)
             except Exception as e:
                 logger.exception(f"Error polling Tradovate order {broker_order_id}")
                 return OrderStatusResult(found=False, error_message=str(e))

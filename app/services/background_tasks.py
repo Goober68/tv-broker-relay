@@ -1349,6 +1349,29 @@ async def _gtd_expiry_once():
                     broker = await get_broker_for_tenant(
                         order.broker, order.account, order.tenant_id, db
                     )
+                    # Check current broker status before cancelling — if the order
+                    # filled between our DB query and now, don't kill the strategy
+                    # (which would wipe out bracket SL/TP/trailing stop legs).
+                    status = await broker.poll_order_status(order.broker_order_id, order.account)
+                    if status.is_filled:
+                        logger.info(
+                            f"GTD expiry: order {order.id} already filled on broker — "
+                            f"skipping cancel to preserve bracket legs"
+                        )
+                        order.status = OrderStatus.FILLED
+                        order.filled_quantity = status.filled_quantity
+                        order.avg_fill_price = status.avg_fill_price
+                        await apply_fill_to_position(
+                            db, order, status.filled_quantity, status.avg_fill_price
+                        )
+                        continue
+                    if status.is_cancelled:
+                        logger.info(
+                            f"GTD expiry: order {order.id} already cancelled on broker"
+                        )
+                        order.status = OrderStatus.CANCELLED
+                        continue
+
                     cancelled = await broker.cancel_order(order.broker_order_id, order.account)
                     if cancelled:
                         logger.info(
@@ -1440,7 +1463,7 @@ def start_background_tasks() -> list[asyncio.Task]:
         ),
         asyncio.create_task(
             # GTD expiry: cancel expired orders every 15s
-            _run_forever("gtd_expiry", 15, _gtd_expiry_once),
+            _run_forever("gtd_expiry", 5, _gtd_expiry_once),
             name="gtd_expiry",
         ),
     ]

@@ -108,7 +108,7 @@ services:
         condition: service_completed_successfully
     networks:
       - internal
-    # No web network — worker has no external traffic
+      - web      # needs external access for broker APIs
     expose:
       - "8003"
     logging:
