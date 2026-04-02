@@ -1,0 +1,22 @@
+# Staging Caddyfile
+# For local-only staging (no public DNS), use localhost:8443
+# For public staging, set up staging.tvbrokerrelay.com DNS A record
+
+staging.tvbrokerrelay.com {
+    reverse_proxy app:8000
+
+    header {
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        X-Robots-Tag "noindex, nofollow"
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/staging-access.log {
+            roll_size 20mb
+            roll_keep 3
+        }
+        format json
+    }
+}

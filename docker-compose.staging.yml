@@ -1,0 +1,40 @@
+# Staging override — run alongside production on the same host
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml -p relay-staging up -d
+#
+# Requires: .env.staging file (copy from .env.example, use demo/sandbox broker URLs)
+# Staging site: https://staging.tvbrokerrelay.com
+
+services:
+
+  app:
+    env_file: .env.staging
+    environment:
+      DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD}@db:5432/relay_staging
+
+  migrate:
+    env_file: .env.staging
+    environment:
+      DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD}@db:5432/relay_staging
+
+  db:
+    environment:
+      # Create staging DB on first run (init script handles this)
+      POSTGRES_DB: relay
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+      - ./init-staging-db.sh:/docker-entrypoint-initdb.d/init-staging-db.sh:ro
+
+  caddy:
+    volumes:
+      - ./Caddyfile.staging:/etc/caddy/Caddyfile:ro
+      - caddy_staging_data:/data
+      - caddy_staging_config:/config
+    ports:
+      - "8080:80"
+      - "8443:443"
+      - "8443:443/udp"
+
+volumes:
+  postgres_staging_data:
+  caddy_staging_data:
+  caddy_staging_config:
